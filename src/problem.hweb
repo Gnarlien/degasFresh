@@ -1,0 +1,479 @@
+@* Problem definitions.
+
+% $Id: cb3293a34760a2dc96a6b3822d323371c3ea5c68 $
+
+\ID{$Id: cb3293a34760a2dc96a6b3822d323371c3ea5c68 $}
+
+@I reaction.hweb
+@I species.hweb
+@I materials.hweb
+
+@ Information about problem particles is held in arrays in common blocks.  An
+problem is identified by an integer indexing into these arrays.
+
+@f pr_test_decl integer
+@f pr_background_decl integer
+@f pr_reaction_decl integer
+@f pr_generic_decl integer
+@f pr_materials_decl integer
+@f pr_pmi_decl integer
+
+@m pr_test_args(x) x
+@m pr_background_args(x) x
+@m pr_reaction_args(x) x
+@m pr_generic_args(x) x
+@m pr_materials_args(x) x
+@m pr_pmi_args(x) x
+
+@m pr_test_dummy(x) x
+@m pr_background_dummy(x) x
+@m pr_reaction_dummy(x) x
+@m pr_generic_dummy(x) x
+@m pr_materials_dummy(x) x
+@m pr_pmi_dummy(x) x
+
+@m pr_test_decl(x) integer x @;
+@m pr_background_decl(x) integer x @;
+@m pr_reaction_decl(x) integer x @;
+@m pr_generic_decl(x) integer x @;
+@m pr_materials_decl(x) integer x @;
+@m pr_pmi_decl(x) integer x @;
+
+@m pr_test_copy(x,y) y=x @;
+@m pr_background_copy(x,y) y=x @;
+@m pr_reaction_copy(x,y) y=x @;
+@m pr_generic_copy(x,y) y=x @;
+@m pr_materials_copy(x,y) y=x @;
+@m pr_pmi_copy(x,y) y=x @;
+
+@m pr_test_check(x) (x > 0 && x <= pr_test_num)
+@m pr_background_check(x) (x > 0 && x <= pr_background_num)
+@m pr_ex_test_check(x) (x > 0 && x <= pr_ex_test_num)
+@m pr_reaction_check(x) (x > 0 && x <= pr_reaction_num)
+@m pr_materials_check(x) (x > 0 && x <= pr_materials_num)
+@m pr_pmi_check(x) (x > 0 && x <= pr_pmi_num)
+
+@m pr_test(x) problem_test_sp[x]
+@m pr_background(x) problem_background_sp[x]
+@m pr_ex_test(x) problem_ex_test_sp[x]
+@m pr_reaction(x) problem_rc[x]
+@m pr_mat_ref(x) problem_materials_ref[x]
+
+@m pr_rc_num(x) problem_reaction_num[x]
+@m pr_ts_rc(x,i) problem_test_reaction[i,x]
+@m pr_ts_bk(x,i) problem_test_background[i,x]
+
+@m pr_num_arrangements(i,j) problem_num_arrangements[j,i]
+@m pr_ts_prod(i,j,k,l) problem_test_products[l,k,j,i]
+@m pr_prod_mult(i,j,k) problem_prod_mult[k,j,i]
+
+@m pr_bk_rc(i) problem_background_reaction[i]
+@m pr_bkrc_rg(i,j) problem_bkrc_reagents[j,i]
+@m pr_bkrc_prod(i,j) problem_bkrc_products[j,i]
+
+@m pr_ex_rc(i) problem_external_reaction[i]
+@m pr_ex_ts_rc_num(i) problem_external_test_reaction_num[i]
+@m pr_ex_ts_rc(x,i) problem_external_test_reaction[i,x]
+@m pr_ex_ts_bk(x,i) problem_external_test_background[i,x]
+@m pr_ex_rc_prod(i,j,k) problem_exrc_products[k,j,i]
+
+@m pr_pm_ref(x) problem_pmi_ref[x]
+@m pr_pm_case_num(x) problem_pmi_case_num[x]
+@m pr_pm_cases(x,i) problem_pmi_cases[i,x]
+
+@m pr_pm_num_arrange(i,j) problem_pmi_num_arrange[j,i]
+@m pr_pm_prod(i,j,k,l) problem_pmi_products[l,k,j,i]
+@m pr_pm_prod_mult(i,j,k) problem_pmi_prod_mult[k,j,i]
+
+@m pr_test_lookup(sp) problem_species_test[sp]
+@m pr_background_lookup(sp) problem_species_background[sp]
+@m pr_reaction_lookup(rc) int_lookup(rc,problem_rc,pr_reaction_num)
+@m pr_ex_test_lookup(sp) int_lookup(sp,problem_ex_test_sp,pr_ex_test_dim)
+
+@ Length specifications.
+
+@m pr_reaction_max 15
+@m pr_arrangement_max 4
+@m pr_pmi_max 8
+@m pr_max_equiv 11
+@m pr_bkrc_reagent_max 2
+@m pr_tag_string_length 40
+@m pr_max_lines 6
+
+@ Pointers to entries in dependent variable list. These are associated
+with string descriptors in subroutine |init_var0_list|. New additions
+here must added there as well.
+
+@m pr_var_unknown 1
+@m pr_var_mass 2                        // test particle data
+@m pr_var_momentum_vector 3
+@m pr_var_momentum_2 4
+@m pr_var_momentum_3 5
+@m pr_var_energy 6
+@m pr_var_angle 7
+@m pr_var_emitter_v_vector 8                 // For spectrum construction
+@m pr_var_emitter_v_2 9
+@m pr_var_emitter_v_3 10
+@m pr_var_emitter_vf_Maxwell_vector 11
+@m pr_var_emitter_vf_Maxwell_2 12
+@m pr_var_emitter_vf_Maxwell_3 13
+@m pr_var_emitter_vth_Maxwell 14
+@m pr_var_xy_stress 15                  // For Couette flow example
+
+@m pr_num_diag_vars 5  
+                                        // Constructed variables begin after
+                                        // these; place other constants above.
+@m pr_var_mass_change 20              
+@m pr_var_momentum_change_vector 21       // Exchanges with background species
+@m pr_var_momentum_change_2 22
+@m pr_var_momentum_change_3 23
+@m pr_var_energy_change 24
+@m pr_var_mass_in 25                    // Direction dependent for use with
+@m pr_var_momentum_in_vector 26         // PMI and diagnostic sectors.
+@m pr_var_momentum_in_2 27
+@m pr_var_momentum_in_3 28              // ``mass'' variables are assumed to be
+@m pr_var_energy_in 29                  // first in these two lists. The lists
+@m pr_var_mass_out 30                   // are |pr_num_diag_vars| items long.
+@m pr_var_momentum_out_vector 31
+@m pr_var_momentum_out_2 32
+@m pr_var_momentum_out_3 33
+@m pr_var_energy_out 34
+
+@m pr_num_change_vars 15
+
+@#if 0
+@m pr_var_back_index(i,back) i+pr_num_change_vars*back
+@#endif
+
+@m pr_problem_sp_back(back) back
+
+@m pr_problem_sp_test(test) (pr_background_num+test)
+
+@m pr_var_problem_sp_index(i,psp) i+pr_num_change_vars*psp
+
+@ Variable definitions.
+
+@a
+      package_init(pr)
+      define_var_pk(pr,pr_test_num,INT)
+      define_var_pk(pr,pr_background_num,INT)
+      define_var_pk(pr,pr_ex_test_num,INT)
+      define_var_pk(pr,pr_ex_test_dim,INT)
+      define_var_pk(pr,pr_reaction_num,INT)
+      define_var_pk(pr,pr_reaction_dim,INT)
+      define_var_pk(pr,pr_bkrc_num,INT)
+      define_var_pk(pr,pr_bkrc_dim,INT)
+      define_var_pk(pr,pr_exrc_num,INT)
+      define_var_pk(pr,pr_exrc_dim,INT)
+      define_var_pk(pr,pr_materials_num,INT)
+      define_var_pk(pr,pr_pmi_num,INT)
+
+      define_var_pk(pr,pr_var0_num,INT)
+
+      define_dimen_pk(pr,problem_test_ind,pr_test_num)
+      define_dimen_pk(pr,problem_background_ind,pr_background_num)
+      define_dimen_pk(pr,problem_ex_test_ind,pr_ex_test_dim)
+      define_dimen_pk(pr,problem_reaction_ind,pr_reaction_dim)
+      define_dimen_pk(pr,problem_reaction_ind0,pr_reaction_max)
+      define_dimen_pk(pr,problem_bkrc_ind,pr_bkrc_dim)
+      define_dimen_pk(pr,problem_bkrc_rg_ind,pr_bkrc_reagent_max)
+      define_dimen_pk(pr,problem_exrc_ind,pr_exrc_dim)
+      define_dimen_pk(pr,problem_species_ind,sp_num)
+      define_dimen_pk(pr,problem_materials_ref_ind,ma_num)
+      define_dimen_pk(pr,problem_materials_sub_ind,pr_materials_num)
+      define_dimen_pk(pr,problem_pmi_ref_ind,pm_num)
+      define_dimen_pk(pr,problem_pmi_sub_ind,pr_pmi_num)
+      define_dimen_pk(pr,problem_pmi_ind0,pr_pmi_max)
+      define_dimen_pk(pr,problem_product_ind,rc_product_max)
+      define_dimen_pk(pr,problem_arr_ind,pr_arrangement_max)
+
+      define_dimen_pk(pr,pr_var0_list_ind,pr_var0_num)
+      define_dimen_pk(pr,pr_tag_string,pr_tag_string_length)
+
+      define_varp_pk(pr,problem_species_test,INT,problem_species_ind)
+      define_varp_pk(pr,problem_species_background,INT,problem_species_ind)
+      define_varp_pk(pr,problem_materials_sub,INT,problem_materials_ref_ind)
+      define_varp_pk(pr,problem_test_sp,INT,problem_test_ind)
+      define_varp_pk(pr,problem_background_sp,INT,problem_background_ind)
+      define_varp_pk(pr,problem_ex_test_sp,INT,problem_ex_test_ind)
+      define_varp_pk(pr,problem_materials_ref,INT,problem_materials_sub_ind)
+
+      define_varp_pk(pr,problem_rc,INT,problem_reaction_ind)
+      define_varp_pk(pr,problem_reaction_num,INT,problem_test_ind)
+      define_varp_pk(pr,problem_test_reaction,INT,problem_reaction_ind0,problem_test_ind)
+      define_varp_pk(pr,problem_test_background,INT,problem_reaction_ind0,problem_test_ind)
+
+      define_varp_pk(pr,problem_num_arrangements,INT,problem_reaction_ind0,problem_test_ind)
+      define_varp_pk(pr,problem_test_products,INT,problem_product_ind,problem_arr_ind,problem_reaction_ind0,problem_test_ind)
+      define_varp_pk(pr,problem_prod_mult,FLOAT,problem_arr_ind,problem_reaction_ind0,problem_test_ind)
+
+      define_varp_pk(pr,problem_background_reaction,INT,problem_bkrc_ind)
+      define_varp_pk(pr,problem_bkrc_reagents,INT,problem_bkrc_rg_ind,problem_bkrc_ind)
+      define_varp_pk(pr,problem_bkrc_products,INT,problem_product_ind,problem_bkrc_ind)
+
+      define_varp_pk(pr,problem_external_reaction,INT,problem_exrc_ind)
+      define_varp_pk(pr,problem_external_test_reaction_num,INT,problem_ex_test_ind)
+      define_varp_pk(pr,problem_external_test_reaction,INT,problem_reaction_ind0,problem_ex_test_ind)
+      define_varp_pk(pr,problem_external_test_background,INT,problem_reaction_ind0,problem_ex_test_ind)
+      define_varp_pk(pr,problem_exrc_products,INT,problem_product_ind,problem_reaction_ind0,problem_ex_test_ind)
+
+      define_varp_pk(pr,problem_pmi_ref,INT,problem_pmi_sub_ind)
+      define_varp_pk(pr,problem_pmi_sub,INT,problem_pmi_ref_ind)
+      define_varp_pk(pr,problem_pmi_case_num,INT,problem_test_ind)
+      define_varp_pk(pr,problem_pmi_cases,INT,problem_pmi_ind0,problem_test_ind)
+
+      define_varp_pk(pr,problem_pmi_num_arrange,INT,problem_pmi_ind0,problem_test_ind)
+      define_varp_pk(pr,problem_pmi_products,INT,problem_product_ind,problem_arr_ind,problem_pmi_ind0,problem_test_ind)
+      define_varp_pk(pr,problem_pmi_prod_mult,FLOAT,problem_arr_ind,problem_pmi_ind0,problem_test_ind)
+
+      define_varp_pk(pr,pr_var0_list,CHAR,pr_tag_string,pr_var0_list_ind)
+
+      define_varlocal_pk(pr,problem_version,CHAR,string)
+      package_end(pr)
+
+@ Variables for problemsetup.
+
+@a
+      package_init(ps)
+      define_var_pk(ps,num_generics,INT)
+      define_dimen_pk(ps,pr_equiv_ind,pr_max_equiv)
+      define_varp_pk(ps,generics,INT,problem_species_ind)
+      define_varp_pk(ps,num_equiv,INT,problem_species_ind)
+      define_varp_pk(ps,equivalents,INT,pr_equiv_ind,problem_species_ind)
+      package_end(ps)
+
+@* Problem class attribute descriptions.
+
+@ Data structures used to specify the current problem. Prefix is |pr|. 
+
+These properties characterize the
+interactions between the various components of the problem: test particles,
+background species, reactions, materials, and plasma-material interactions.
+The integer indices and array values
+noted below correspond
+to entries into one of several lists.
+For clarity, we will associate with each list a different subscript to
+be used in the subsequent definitions:
+\begin{enumerate}
+  \item Reference list of species (class |sp|) (subscript: $s$),
+  \item Reference list of reactions (class |rc|) (subscript: $r$),
+  \item List of test species (problem input) (subscript: $t$),
+  \item List of background species (problem input) (subscript: $b$),
+  \item List of problem reactions (problem input) (subscript: $pr$),
+  \item List of problem background reactions (problem input) (subscript: $br$),
+  \item Reference list of materials (class |ma|) (subscript: $m$),
+  \item List of problem materials (problem input) (subscript: $ms$),
+  \item Reference list of plasma-materials interactions (class |pm|) 
+(subscript: $p$),
+  \item List of problem PMI (problem input) (subscript: $ps$),
+\end{enumerate}
+The index $i$ below refers to an element of each of these lists. Once we've got
+the subset lists specified in the ``problem input'', we can identify the
+reactions and PMI in which particular test species participates. Indices for 
+these sub-subset lists are denoted by $j$ below. Reactions
+between background species only (e.g., recombination) are designated as
+``background reactions'' and are characterized by separate arrays below.
+Background reactions enter into the problem by having a test species (maybe
+more than one?) in their list of products and, thus, give rise to a source
+group (class |so|).
+
+The third class of reactions, ``external
+reactions'', are not used directly in the DEGAS 2 calculation, but by a
+plasma code coupled to it.  Associated with these reactions is a list of      
+``external'' test species that play a role analogous to standard test 
+species.  The ``background'' species in external reactions are sufficiently
+similar to standard background species that no distinction is made.      
+{\em Both the external test and reaction specifications are completely optional
+and will not be present in most problem files.}
+
+\begin{description}
+
+  \item{|pr_test|($i_{t}$)} Species index of test species $i_{t}$.
+
+  \item{|pr_background|($i_{b}$)} Species index of background species $i_{b}$.
+
+  \item{|pr_ex_test|($i_{t}$)} Species index of external test species $i_{t}$. 
+
+  \item{|pr_reaction|($i_{pr}$)} Index into the reference list of reactions for
+problem reaction $i_{pr}$.
+
+  \item{|pr_mat_ref|($i_{ms}$)} Reference materials index of the $i_{ms}$ 
+entry in the problem materials subset.
+
+  \item{|pr_rc_num|($i_{t}$)} Number of reactions in which test species 
+$i_{t}$ participates.
+
+  \item{|pr_ts_rc|($i_{t}$,$j$)} Index of the problem reaction
+for the $j$th reaction involving test species $i_{t}$, $1 \leq 
+j \leq |pr_rc_num|(i_{t})$.
+
+  \item{|pr_ts_bk|($i_{t}$,$j$)} Index into the list of (problem) 
+background species for the $j$th reaction involving test species $i_{t}$.
+
+  \item{|pr_num_arrangements|($i_{t}$,$j$)} Number of arrangements of
+products (which may or may not be truly different) for  the $j$th 
+reaction involving test species $i_{t}$.
+ 
+  \item{|pr_ts_prod|($i_{t}$,$j$,$k$,$l$)} The $l$th product (equivalent
+to the $l$th entry in the list of generic species given by |rc_product|) for 
+the $k$th arrangement of
+the $j$th reaction involving test species $i_{t}$.
+
+  \item{|pr_prod_mult|($i_{t}$,$j$,$k$)} Relative weight or 
+multiplicity of the $k$th
+arrangement of  the $j$th reaction involving test species $i_{t}$. This
+quantity is the probability of obtaining arrangement $k$ in this reaction.
+
+  \item{|pr_bk_rc|($i_{br}$)} Index into the reference list of reactions
+for problem background reaction $i_{br}$.
+
+  \item{|pr_bkrc_rg|($i_{br}$,$j$)} Index into the list of (problem) background
+species for the $j$th reagent (1 $\leq j \leq$ |pr_bkrc_reagent_max|) in the
+$i_{br}$th background reaction.
+
+  \item{|pr_bkrc_prod|($i_{br}$,$j$)} Index into the list of reference species
+for the $j$th product of the $i_{br}$th background reaction.
+
+  \item{|pr_ex_rc|($i_{ex}$)} Index into the reference list of reactions for
+external reaction $i_{ex}$.
+
+  \item{|pr_ex_ts_rc_num|($i_{t}$)} Number of external reactions in which external
+test species $i_{t}$ participates.
+
+  \item{|pr_ex_ts_rc|($i_{t}$,$j$)} Index of the problem background species
+for the $j$th reaction involving external test species $i_{t}$, $1 \leq
+j \leq |pr_ex_rc_num|(i_{t})$.
+
+  \item{|pr_ex_ts_bk|($i_{t}$,$j$)} Index of the problem (external) reaction
+for the $j$th reaction involving external test species $i_{t}$.
+
+  \item{|pr_ex_rc_prod|($i_{t}$,$j$,$k$)} Reference species index for the
+$k$th product of the $j$th reaction involving external test species
+$i_{t}$.
+
+  \item{|pr_pm_ref|($i_{ps}$)} Index into the reference list of PMI for
+problem PMI $i_{ps}$.
+
+  \item{|pr_pm_case_num|($i_{t}$)} Number of PMI in which test species 
+$i_{t}$ participates.
+
+  \item{|pr_pm_cases|($i_{t}$,$j$)} Index of the problem PMI
+for the $j$th reaction involving test species $i_{t}$, $1 \leq j
+\leq |pr_pm_case_num|(i_{t})$.
+
+  \item{|pr_pm_num_arrange|($i_{t}$,$j$)} Number of arrangements of
+products (which may or may not be truly different) for  the $j$th 
+PMI involving test species $i_{t}$.
+
+  \item{|pr_pm_prod|($i_{t}$,$j$,$k$,$l$)} The $l$th product 
+for the $k$th arrangement of
+the $j$th PMI involving test species $i_{t}$.
+
+  \item{|pr_prod_mult|($i_{t}$,$j$,$k$)} Relative weight or 
+multiplicity of the $k$th
+arrangement of  the $j$th PMI involving test species $i_{t}$. This
+quantity is the probability of obtaining arrangement $k$ in this PMI.
+\end{description}
+
+@ Internal variables for the problem class.
+
+\begin{description}
+
+  \item{|pr_test_num|} Number of test species in the problem.
+
+  \item{|pr_background_num|} Number of background species in the problem.
+      
+  \item{|pr_ex_test_num|} Number of external test species in use.
+
+  \item{|pr_reaction_num|} Number of reactions in the problem.
+
+  \item{|pr_bkrc_num|} Number of background reactions in the problem.
+
+  \item{|pr_bkrc_dim|} For dimensioning; is equal to |pr_bkrc_num|, except
+is set to 1 when |pr_bkrc_num|=0.
+
+  \item{|pr_exrc_num|} Number of external reactions in use.
+
+  \item{|pr_exrc_dim|} For dimensioning; is equal to |pr_exrc_num|, except 
+is set to 1 when |pr_exrc_num|=0.
+
+  \item{|pr_materials_num|} Number of materials in the problem.
+
+  \item{|pr_pmi_num|} Number of plasma-material interactions in the problem.
+
+  \item{|pr_var0_num|} Number of entries in |pr_var0_list|.
+
+  \item{|pr_materials_sub|[$i_{m}$]} Problem index of reference material
+$i_{m}$.
+
+  \item{|problem_pmi_sub|[$i_{p}$]} Index of the problem PMI 
+corresponding to reference PMI $i_{p}$.
+
+  \item{|pr_var0_list|[$j$]} List of dependent variables in the problem
+(compiled on the fly), $1 \leq j \leq$ |pr_var0_num|. 
+\end{description}
+
+@ Routines using problem class.
+
+Note: these first two lookup macros are frequently used and are thus based
+on actual internal arrays.
+
+\begin{description}
+
+  \item{|pr_test_lookup|($i_{s}$)} Index into the list of problem test species
+corresponding to reference species $i_{s}$; returns 0 if the species $i_{s}$
+is not a test species.
+
+  \item{|pr_background_lookup|($i_{s}$)} Index into the list of problem
+background species corresponding to reference species $i_{s}$; returns 0 if 
+the species $i_{s}$ is not a background species.
+
+  \item{|pr_reaction_lookup|($i_{r}$)} Index into the list of problem reactions
+corresponding to reference reaction $i_{r}$.
+
+  \item{|pr_problem_sp_back|(|back|)} Provides integer index into 
+combined background and test list (problem species list) for background
+species |back|.
+
+  \item{|pr_problem_sp_test|(|test|)} Provides integer index into 
+combined background and test list (problem species list) for test
+species |test|.
+
+  \item{|pr_var_problem_sp_index|($i$,|psp|)} Provides integer index
+into |pr_var0_list| for any problem species |psp|. The list of
+problem species is the combined  background and test species list.
+(The generic exchange variables such as |pr_var_mass_change| are duplicated
+|pr_background_num| + |pr_test_num| times).
+\end{description}
+
+@ Problem setup variables for isotopic variations. Prefix is |ps|.
+
+The following variables are required in a number of the |problemsetup.web| 
+routines, but not in any outside; hence, they have been broken off into this
+separate package defined within |problem.hweb|.
+
+The mechanism for dealing with isotopic variations involves defining a
+``generic species'', a single species which represents all of the isotopic
+combinations equivalent to it.
+E.g., for the all-important case of hydrogen,
+the generic archetype for a given molecule is defined (or at least
+it should be) as the one containing only protium isotopes.
+
+\begin{description}
+
+  \item[|num_generics|] Total number of "generic species" appearing
+in the lists of test and background species.
+
+  \item[|generics|[$i_{s}$]] Provides the index $i_{g}$ (used below)
+of the ``generic species'' which is being used to represent (the isotopically
+equivalent) species $i_{s}$ of the reference species list.
+
+  \item[|num_equiv|[$i_{g}$]] Total number of entries in the test and 
+background species lists which are equivalent to "generic species" $i_{g}$.
+
+  \item[|equivalents|[$i_{g}$,$j$]] Provides the index into the 
+reference species list of
+the $j$th particle equivalent to generic species $i_{g}$, where $1 \leq j \leq
+|num_equiv|[i_{g}]$.
+\end{description}
+

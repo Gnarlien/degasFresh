@@ -1,0 +1,55 @@
+% $Id: d1c86212f73aeb508e1089f07211739881e145a9 $
+\Title{teststring}
+
+
+@* Introduction.
+
+\ID{$Id: d1c86212f73aeb508e1089f07211739881e145a9 $}
+
+Introduction\ldots
+
+@m FILE 'teststring.web'
+
+@I macros.hweb
+
+
+@ The unnamed module.
+
+@a
+      program foo
+      implicit_none_f77
+      implicit_none_f90
+      character*LINELEN string
+      integer l,p,b,e
+      logical test,test1
+      external read_string,parse_string,next_token
+      logical read_string,next_token
+      integer parse_string
+
+      open(unit=20,file='teststring.inp',status='old')
+      
+loop: continue
+      test=read_string(20,string,l)
+      l=min(l,len(string))
+      l=parse_string(string(1:l))
+      write(stdout,*) l
+      p=0
+loop1:continue
+      test1=next_token(string(1:l),b,e,p)
+      if (test1) then
+         write(stdout,*) e-b+1, ' ', string(b:e)
+         goto loop1
+      end if
+      
+      if (test) goto loop
+
+      stop
+      end
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

@@ -1,0 +1,20 @@
+% $Id: a189368e21f358302a2743e3388ab0fb5b03b330 $
+\Title{A FWEB template}
+
+@* A template FWEB file.
+
+\ID{$Id: a189368e21f358302a2743e3388ab0fb5b03b330 $}
+
+@m FILE 'template.web'
+
+@I macros.hweb
+
+@ The main program.
+
+@a
+      @<Functions and subroutines@>
+
+@ Functions.
+@<Functions...@>=
+
+@* INDEX.

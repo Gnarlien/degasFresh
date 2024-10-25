@@ -1,0 +1,286 @@
+% $Id: 328debe12a02a4fe245926837bf5db2b2d7f806a $
+\Title{speciesetup}
+
+
+@* Routines used to set up species.
+
+\ID{$Id: 328debe12a02a4fe245926837bf5db2b2d7f806a $}
+
+Inputs for species are contained in the file with the symbolic
+name \verb+species_infile+ identified in the \verb+degas2.in+ file. 
+Each species is an aggregate of the
+elements and is represented by two lines in this file.  The
+first line provides the full name of the species.  
+The second line is a blank-delimited
+sequence of entries
+\begin{verbatim}
+symbol count-1 element-1 count-2 element-2 ...
+\end{verbatim}
+
+An isotopic equivalence of this species to a previously-defined
+generic one is indicated with a delimiter ``='' followed by the
+symbol of the generic species.
+
+For example,
+
+\begin{verbatim}
+geometry
+0  1 0
+electron
+e  1 e
+atomic hydrogen
+H  1 H
+molecular hydrogen
+H2 2 H
+hydrogen ion
+H+ 1 H -1 e
+atomic deuterium
+D  1 D      = H
+deuterium ion
+D+ 1 D -1 e = H+
+molecular hydrogen-deuterium
+HD 1 H 1 D  = H2
+molecular deuterium
+D2 2 D      = H2
+molecular hydrogen ion
+H2+ 2 H -1 e
+molecular hydrogen-deterium ion
+HD+ 1 H 1 D -1 e = H2+
+molecular deuterium ion
+D2+ 2 D -1 e     = H2+
+helium
+He
+\end{verbatim}
+
+These routines are called by the program |datasetup|. |datasetup| reads 
+the \verb+species_infile+, translates the information into DEGAS 2 data,
+and generates the netCDF file corresponding to the symbolic name
+\verb+speciesfile+.
+
+@m FILE 'speciesetup.web'
+
+@I macros.hweb
+@I readfilenames.hweb
+@I species.hweb
+@I element.hweb
+@I sysdep.hweb
+@I string.hweb
+@I netcdf.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Read in data from \verb+species_infile+.
+
+@<Functions...@>=
+      subroutine read_species
+      implicit_none_f77
+      sp_common                 // Common
+      el_common
+      rf_common
+      implicit_none_f90
+      st_decls
+      @<Memory allocation interface@>
+
+      external get_multiplicity // External
+      integer get_multiplicity
+
+      integer length,p,b,e,i // Local
+      character*LINELEN line
+      character*FILELEN tempfile     //local
+
+      sp_num=0
+      species_version='unknown'
+      tempfile = filenames_array[species_infile]
+      assert(tempfile != char_undef)
+      open(unit=diskin,file=tempfile,
+     $     form='formatted',status='old')
+      assert( read_string(diskin,line,length) )
+      assert(length<=len(line))
+      species_version=line(:length)
+loop1: continue
+      if (! read_string(diskin,line,length) ) goto eof
+/*
+   Add next species
+*/
+      sp_num=sp_num+1
+      var_realloca(species_name)
+      var_realloca(species_sy)
+      var_realloca(species_z)
+      var_realloca(species_m)
+      var_realloca(species_ncomp)
+      var_realloca(species_generic)
+      var_realloca(species_multiplicity)
+      var_realloca(species_el)
+      var_realloca(species_count)
+/*
+   First line contains species name
+*/
+      length=parse_string(line(:length))
+      species_name[sp_num]=line(:length)
+/*
+   Second line contains symbol and breakdown into ``elements''
+*/
+      assert(read_string(diskin,line,length))
+      length=parse_string(line(:length))
+/*
+   Extract species ``symbol'' from this line
+*/      
+      p=0
+      assert( next_token(line,b,e,p) )
+      sp_sy(sp_num)=read_text(line(b:e))
+      sp_ncomp(sp_num) = 0
+      sp_z(sp_num)=0
+      sp_m(sp_num)=zero
+      do i=1,sp_ncomp_max
+         sp_el(sp_num,i)=int_uninit
+         sp_count(sp_num,i)=int_uninit
+      end do
+/*
+   Loop over individual ``elements''
+*/
+loop2: continue
+      if( !next_token(line,b,e,p) ) then    // Generic species
+         sp_generic(sp_num)=sp_num
+         sp_multiplicity(sp_num)=get_multiplicity(sp_num)
+         goto loop1                         
+      else if (line(b:e)=='=') then         // Non-generic species
+         assert( next_token(line,b,e,p) )
+         sp_generic(sp_num)=sp_lookup(line(b:e))
+         sp_multiplicity(sp_num)=get_multiplicity(sp_num)
+         goto loop1
+      else                                  // Not done reading elements
+
+/*   Increment number of ``components'' $\leftrightarrow$ ``elements'' */
+
+         sp_ncomp(sp_num) = sp_ncomp(sp_num) + 1
+         assert(sp_ncomp(sp_num) > 0 && sp_ncomp(sp_num) <= sp_ncomp_max)
+/*
+   Extract number of this ``component'' in the species
+*/
+         sp_count(sp_num,sp_ncomp(sp_num))=read_integer(line(b:e))
+/*
+   Get the symbol representing the ``element''; store the index used to represent it
+*/
+         assert( next_token(line,b,e,p) )
+         sp_el(sp_num,sp_ncomp(sp_num)) = el_lookup(line(b:e))
+         assert(el_check(sp_el(sp_num,sp_ncomp(sp_num))))
+/*
+   Compute net charge of species. This is = 0 by default; nonzero values are
+   arrived at by incorporating the appropriate number (positive or negative) of electrons.
+*/
+         if (el_z(sp_el(sp_num,sp_ncomp(sp_num))) == -1) then // Only the electron is charged
+            sp_z(sp_num)=sp_z(sp_num)+sp_count(sp_num,sp_ncomp(sp_num))*el_z(sp_el(sp_num,sp_ncomp(sp_num)))
+         end if
+/*
+   Accumulate species mass based on ``count'' and the ``element'' mass
+*/
+         sp_m(sp_num)=sp_m(sp_num)+sp_count(sp_num,sp_ncomp(sp_num))*atomic_mass_unit*el_m(sp_el(sp_num,sp_ncomp(sp_num)))
+      end if
+      goto loop2
+eof:  continue
+      close(unit=diskin)
+      var_reallocb(species_name)
+      var_reallocb(species_sy)
+      var_reallocb(species_z)
+      var_reallocb(species_m)
+      var_reallocb(species_ncomp)
+      var_reallocb(species_generic)
+      var_reallocb(species_multiplicity)
+      var_reallocb(species_el)
+      var_reallocb(species_count)
+
+      return
+      end
+
+@ Write out data into netcdf file \verb+species.nc+
+      
+@<Functions...@>=
+      subroutine nc_write_species
+      implicit_none_f77
+      sp_common                 // Common
+      rf_common
+      implicit_none_f90
+      nc_decls                 // Local
+      integer fileid
+      sp_ncdecl
+      st_decls
+      character*LINELEN description,program_version
+      character* FILELEN tempfile    //local
+
+      program_version=
+     $     'DEGAS 2 Git commit: $Format:%H$, ref names: $Format:%d$'
+
+      tempfile = filenames_array[speciesfile]
+      assert(tempfile != char_undef)
+      fileid = nccreate(tempfile,NC_CLOBBER,nc_stat)
+
+      description = 'Data for species in degas 2'
+      call ncattputc(fileid,NC_GLOBAL,'description',NC_CHAR,
+     $     string_length(description),
+     $     description,nc_stat)
+
+      call ncattputc(fileid,NC_GLOBAL,'data_version',NC_CHAR,
+     $     string_length(species_version),
+     $     species_version,nc_stat)
+      
+      call ncattputc(fileid,NC_GLOBAL,'program_version',NC_CHAR,
+     $     string_length(program_version),
+     $     program_version,nc_stat)
+      
+      sp_ncdef(fileid)
+      call ncendef(fileid,nc_stat)
+      sp_ncwrite(fileid)
+      call ncclose(fileid,nc_stat)
+      
+      return
+      end
+
+@ Compute multiplicity of a given species. This is a temporary version which
+treats hydrogen as the only species with multiple isotopes. A generalization
+may be possible or desirable if the concept of a ``generic element'' analogous
+to the present ``genericspecies'' is introduced.
+
+@<Functions...@>=
+      function get_multiplicity(sp_dummy(species))
+      implicit_none_f77
+      sp_common
+      el_common
+      implicit_none_f90
+      
+      integer get_multiplicity                // Function
+
+      sp_decl(species)                        // Input
+
+      integer i,num_h,num_d,num_t,num_tot     // Local
+      integer fact[0:6]
+      data fact/1,1,2,6,24,120,720/
+
+      num_h=0
+      num_d=0
+      num_t=0
+      do i=1,sp_ncomp(sp_num)
+         if (el_sy(sp_el(sp_num,i))=='H') then
+            num_h=sp_count(sp_num,i)
+         else if (el_sy(sp_el(sp_num,i))=='D') then
+            num_d=sp_count(sp_num,i)
+         else if (el_sy(sp_el(sp_num,i))=='T') then
+            num_t=sp_count(sp_num,i)
+         end if
+      end do
+      num_tot=num_h+num_d+num_t
+      assert(num_tot<=6)           // Limit of factorial table
+      get_multiplicity=fact[num_tot]/(fact[num_h]*fact[num_d]*fact[num_t])
+      
+      return
+      end
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

@@ -1,0 +1,67 @@
+@* Element definitions.
+
+% $Id: bcd4c18ddad37f9e8669f74740e98c8bc44d87ab $
+
+\ID{$Id: bcd4c18ddad37f9e8669f74740e98c8bc44d87ab $}
+
+@ Information about elements is held in arrays in
+common blocks.  An element is identified by an integer indexing into
+these arrays.
+
+@f el_decl integer
+
+@m el_args(x) x
+
+@m el_dummy(x) x
+
+@m el_decl(x) integer x @;
+
+@m el_copy(x,y) y=x @;
+
+@m el_check(x) (x > 0 && x <= el_num)
+
+@m el_name(x) element_name[x]
+@m el_sy(x)   element_sy[x]
+@m el_m(x)    element_m[x]
+@m el_z(x)    element_z[x]
+@m el_lookup(sy) string_lookup(sy,element_sy,el_num)
+
+@ Length specifications.
+
+@m el_sy_len 3
+@m el_name_len 16
+
+@ Variable definitions.
+
+@a
+      package_init(el)
+      define_dimen_pk(el,element_symbol_string,el_sy_len)
+      define_dimen_pk(el,element_name_string,el_name_len)
+      define_var_pk(el,el_num,INT)
+      define_dimen_pk(el,element_ind,el_num)
+      define_varp_pk(el,element_name,CHAR,element_name_string,element_ind)
+      define_varp_pk(el,element_sy,CHAR,element_symbol_string,element_ind)
+      define_varp_pk(el,element_z,INT,element_ind)
+      define_varp_pk(el,element_m,FLOAT,element_ind)
+      define_varlocal_pk(el,element_version,CHAR,string)
+      package_end(el)
+
+@* Element class attribute descriptions.
+
+@ This defines elements.  Prefix is |el|.  
+
+The
+identifier |element| is an integer variable.
+
+\begin{description}
+  \item[|el_name(element)|] Returns the long name (length |el_name_len|).
+  \item[|el_sy(element)|] Returns the symbolic name (length |el_sy_len|).
+  \item[|el_z(element)|] Returns the charge number.
+  \item[|el_m(element)|] Returns the mass number (in amu).
+\end{description}
+
+@ Routines using elements.
+
+|el_lookup(symbol)| Returns the integer element number corresponding to
+the symbolic name |symbol|.
+

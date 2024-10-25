@@ -1,0 +1,69 @@
+@* Arrays used for interpolating between XGC1 toroidal planes.
+
+% $Id: 70b70fc40acedc219ef7495fbe4b9032cb6f3e81 $
+
+\ID{$Id: 70b70fc40acedc219ef7495fbe4b9032cb6f3e81 $}
+
+@I zone.hweb
+
+@ Parameters.
+
+@m xi_pm_minus 0           // Interpolation directions
+@m xi_pm_plus  1
+
+@m xi_max_files 10         // Number of files, $\phi$ values
+
+@ Array definitions.
+
+@a
+      package_init(xi)
+
+      define_dimen_pk(xi,xi_phi_pm_ind,xi_pm_minus,xi_pm_plus)
+      define_dimen_pk(xi,xi_file_ind,0,xi_max_files)
+      define_dimen_pk(xi,xi_zone_ind,zn_num)
+
+      define_var_pk(xi,xi_phis,FLOAT,xi_file_ind)
+
+      define_varp_pk(xi,xi_r_interp,FLOAT,xi_phi_pm_ind,xi_zone_ind)
+      define_varp_pk(xi,xi_z_interp,FLOAT,xi_phi_pm_ind,xi_zone_ind)
+      define_varp_pk(xi,xi_l_interp,FLOAT,xi_phi_pm_ind,xi_zone_ind)
+      define_varp_pk(xi,xi_weight_interp,FLOAT,xi_phi_pm_ind,xi_zone_ind)
+      define_varp_pk(xi,xi_file_interp,INT,xi_phi_pm_ind,xi_zone_ind)
+      define_varp_pk(xi,xi_tri_interp,INT,xi_phi_pm_ind,xi_zone_ind)
+
+      package_end(xi)
+
+@* Description of XGC1 interpolation data structures.
+
+\begin{description}
+  \item[|xi_phis[if]|] Toroidal angles in radians of XGC1 planes being
+used.  Function of file number |if|.
+
+  \item[|xi_r_interp[zone][pm]|] Major radius $R$ at the adjacent
+XGC1 planes in the $-\hat{\phi}$ and $+\hat{\phi}$ (|pm| = 0 and 1) 
+directions starting from |zone|.
+
+  \item[|xi_z_interp[zone][pm]|] Vertical coordinate $Z$ at the adjacent
+XGC1 planes in the $-\hat{\phi}$ and $+\hat{\phi}$ (|pm| = 0 and 1) 
+directions starting from |zone|.
+
+  \item[|xi_l_interp[zone][pm]|] Distance along the field line to
+the adjacent XGC1 planes in the $-\hat{\phi}$ and $+\hat{\phi}$ 
+(|pm| = 0 and 1) directions starting from |zone|.
+
+  \item[|xi_weight_interp[zone][pm]|] Weighting factor, based on
+the distance along the field line, associated with the adjacent
+XGC1 planes in the $-\hat{\phi}$ and $+\hat{\phi}$ (|pm| = 0 and 1) 
+directions starting from |zone|.
+
+  \item[|xi_file_interp[zone][pm]|] File indices associated with 
+the adjacent XGC1 planes in the $-\hat{\phi}$ and $+\hat{\phi}$ 
+(|pm| = 0 and 1) directions starting from |zone|.
+
+  \item[|xi_tri_interp[zone][pm]|] Triangle index, found via |zn_index(zn_ix)|,
+at the $R,Z$ at the adjacent XGC1 planes in the $-\hat{\phi}$ and 
+$+\hat{\phi}$ (|pm| = 0 and 1) directions starting from |zone|.
+\end{description}
+
+
+

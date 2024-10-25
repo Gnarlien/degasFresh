@@ -1,0 +1,334 @@
+% $Id: 6bf6d2e41c6b66feb2bc479b8afb2cf298b10abf $
+\Title{usr2ddetector}
+
+@* LTX 20-channel Lyman alpha detector 
+adopted from btopdetector.web
+
+\ID{$Id: 6bf6d2e41c6b66feb2bc479b8afb2cf298b10abf $}
+
+@m FILE 'usr2ddetector.web'
+
+@I macros.hweb
+@I sysdep.hweb
+@I geomint.hweb
+@I zone.hweb
+@I detector.hweb
+@I geometry2d.hweb
+@I string.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Lyman alpha detector
+
+@m Ndet_pol 20  // To be used as a local dimension.
+@m Ndet_tor 40  // To be used as a local dimension.
+
+@<Functions...@>=
+      subroutine detector_setup
+
+      implicit_none_f77
+      de_common
+      zn_common
+      implicit_none_f90
+
+      @<Memory allocation interface@>
+
+      detector_total_views=Ndet_tor+Ndet_pol
+      var_alloc(de_view_points)
+      var_alloc(de_view_algorithm)
+      var_alloc(de_view_halfwidth)
+
+      call initialize_zone_frags
+
+      de_grps=0
+      de_view_size=0
+      var_alloc(de_view_tab)
+
+      call detector_setup_a
+
+      return
+      end
+
+@ Extension of the above subroutine.  Statements actually making
+assignments to the detector pointer arrays (|de_zone_frags|
+specfically) need to be separated from their allocation above
+so that their array indexing gets handled correctly.
+
+@<Functions...@>=
+      subroutine detector_setup_a
+
+      define_varp(zone_frags,FLOAT,zone_ind)
+
+      implicit_none_f77
+      de_common
+      zn_common
+      implicit_none_f90
+
+      integer view,num,var,tab_index,spacing,i,zone
+      integer grp_views_pol[Ndet_pol], grp_views_tor[Ndet_tor]
+      real var_min,var_max,mult,r_start,z_start,r_end,z_end
+      real x_start,y_start,x_end,y_end
+      real xdet_tor[Ndet_tor],ydet_tor[Ndet_tor],zdet_tor[Ndet_tor]
+      real xtan_tor[Ndet_tor],ytan_tor[Ndet_tor],ztan_tor[Ndet_tor],span_tor[Ndet_tor]
+      real rdet_pol[Ndet_pol],zdet_pol[Ndet_pol]
+      real rtan_pol[Ndet_pol],ztan_pol[Ndet_pol],span_pol[Ndet_pol]
+
+      data (rdet_pol(i),i=1,Ndet_pol)
+     .     /dconst(0.9664157142857147),dconst(0.9664157142857142),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857149),
+     .      dconst(0.9664157142857144),dconst(0.9664157142857147),
+     .      dconst(0.9664157142857144),dconst(0.9664157142857144),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857142),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857142),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857143),
+     .      dconst(0.9664157142857147),dconst(0.9664157142857147),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857147),
+     .      dconst(0.9664157142857142),dconst(0.9664157142857142)/
+
+      data (zdet_pol(i),i=1,Ndet_pol)
+     .     /dconst(0.0058721547903171235),dconst(0.005253304807364445),
+     .      dconst(0.004634454824411895),dconst(0.004015604841459282),
+     .      dconst(0.003396754858506671),dconst(0.0027779048755540584),
+     .      dconst(0.0021590548926014464),dconst(0.0015402049096488214),
+     .      dconst(0.0009213549266962171),dconst(0.00030250494374360935),
+     .      dconst(-0.00031634503920899943),dconst(-0.0009351950221616084),
+     .      dconst(-0.0015540450051142111),dconst(-0.002172894988066828),
+     .      dconst(-0.0027917449710194568),dconst(-0.0034105949539720687),
+     .      dconst(-0.00402944493692468),dconst(-0.004648294919877293),
+     .      dconst(-0.005267144902829906),dconst(-0.005885994885782396)/
+
+      data (rtan_pol(i),i=1,Ndet_pol)
+     .     /dconst(0.15399951202054984),dconst(0.15186433641460054),
+     .      dconst(0.15010556410567802),dconst(0.14825431415588014),
+     .      dconst(0.1462588945603213),dconst(0.1447277135712788),
+     .      dconst(0.14408768455824672),dconst(0.1439419999999999),
+     .      dconst(0.13239500000000007),dconst(0.13239500000000004),
+     .      dconst(0.132395),dconst(0.13239499999999993),
+     .      dconst(0.1439419999999999),dconst(0.1440953042545175),
+     .      dconst(0.1447527389557625),dconst(0.146301493663465),
+     .      dconst(0.14829896977883605),dconst(0.15014421319177906),
+     .      dconst(0.15190650978331707),dconst(0.15405446692232852)/
+
+      data (ztan_pol(i),i=1,Ndet_pol)
+     .    /dconst(-0.1511820513755016),dconst(-0.13561866379777016),
+     .     dconst(-0.11991084732499327),dconst(-0.10414359261983394),
+     .     dconst(-0.0883170279330902),dconst(-0.0723667018289658),
+     .     dconst(-0.05629064407435872),dconst(-0.04016344165762615),
+     .     dconst(-0.02437612735951415),dconst(-0.008003320785419918),
+     .     dconst(0.008369485788657654),dconst(0.02474229236278139),
+     .     dconst(0.04052434549794381),dconst(0.0566509364693735),
+     .     dconst(0.07272494766293232),dconst(0.08867209308505411),
+     .     dconst(0.10449660791443507),dconst(0.12026302851806034),
+     .     dconst(0.13596864512513446),dconst(0.1515277239295884)/
+
+      data (span_pol(i),i=1,Ndet_pol)
+     .    /dconst(0.024649493624023362),dconst(0.02481631779718454),
+     .     dconst(0.024965076810271054),dconst(0.02509507907703358),
+     .     dconst(0.025205709885116494),dconst(0.025296438480925155),
+     .     dconst(0.025366824319464156),dconst(0.02541652234420565),
+     .     dconst(0.02544528718067157),dconst(0.025452976149376645),
+     .     dconst(0.025439551029554645),dconst(0.02540507853306432),
+     .     dconst(0.025349729477568552),dconst(0.025273776678137905),
+     .     dconst(0.02517759160550114),dconst(0.025061639886819764),
+     .     dconst(0.024926475749957207),dconst(0.024772735532673985),
+     .     dconst(0.024601130395819983),dconst(0.02441243839182976)/
+
+
+      data (xdet_tor(i),i=1,Ndet_tor)
+     .    /dconst( -0.409660 ),dconst( -0.409081 ),dconst( -0.408502 ),
+     .     dconst( -0.407923 ),dconst( -0.407344 ),dconst( -0.406765 ),
+     .     dconst( -0.406186 ),dconst( -0.405607 ),dconst( -0.405028 ),
+     .     dconst( -0.404449 ),dconst( -0.403871 ),dconst( -0.403292 ),
+     .     dconst( -0.402713 ),dconst( -0.402134 ),dconst( -0.401555 ),
+     .     dconst( -0.400976 ),dconst( -0.400397 ),dconst( -0.399818 ),
+     .     dconst( -0.399239 ),dconst( -0.398660 ),dconst( -0.415330 ),
+     .     dconst( -0.414751 ),dconst( -0.414172 ),dconst( -0.413593 ),
+     .     dconst( -0.413014 ),dconst( -0.412435 ),dconst( -0.411856 ),
+     .     dconst( -0.411277 ),dconst( -0.410698 ),dconst( -0.410119 ),
+     .     dconst( -0.409541 ),dconst( -0.408962 ),dconst( -0.408383 ),
+     .     dconst( -0.407804 ),dconst( -0.407225 ),dconst( -0.406646 ),
+     .     dconst( -0.406067 ),dconst( -0.405488 ),dconst( -0.404909 ),
+     .     dconst( -0.404330 )/
+
+      data (ydet_tor(i),i=1,Ndet_tor)
+     .    /dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.901460 ),
+     .     dconst( -0.901460 ),dconst( -0.901460 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 ),dconst( -0.899430 ),dconst( -0.899430 ),
+     .     dconst( -0.899430 )/
+
+      data (zdet_tor(i),i=1,Ndet_tor)
+     .    /dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 )/
+
+      data (xtan_tor(i),i=1,Ndet_tor)
+     .    /dconst( -0.269717 ),dconst( -0.278322 ),dconst( -0.286922 ),
+     .     dconst( -0.295513 ),dconst( -0.304089 ),dconst( -0.312646 ),
+     .     dconst( -0.321179 ),dconst( -0.329683 ),dconst( -0.338154 ),
+     .     dconst( -0.346587 ),dconst( -0.354977 ),dconst( -0.363320 ),
+     .     dconst( -0.371610 ),dconst( -0.379843 ),dconst( -0.388014 ),
+     .     dconst( -0.396120 ),dconst( -0.404154 ),dconst( -0.412114 ),
+     .     dconst( -0.419995 ),dconst( -0.427792 ),dconst( -0.415189 ),
+     .     dconst( -0.422733 ),dconst( -0.430205 ),dconst( -0.437602 ),
+     .     dconst( -0.444920 ),dconst( -0.452155 ),dconst( -0.459303 ),
+     .     dconst( -0.466363 ),dconst( -0.473330 ),dconst( -0.480202 ),
+     .     dconst( -0.486975 ),dconst( -0.493647 ),dconst( -0.500215 ),
+     .     dconst( -0.506676 ),dconst( -0.513028 ),dconst( -0.519269 ),
+     .     dconst( -0.525395 ),dconst( -0.531406 ),dconst( -0.537299 ),
+     .     dconst( -0.543072 )/
+     
+      data (ytan_tor(i),i=1,Ndet_tor)
+     .    /dconst( 0.040088 ),dconst( 0.038709 ),dconst( 0.037165 ),
+     .     dconst( 0.035455 ),dconst( 0.033580 ),dconst( 0.031539 ),
+     .     dconst( 0.029333 ),dconst( 0.026961 ),dconst( 0.024424 ),
+     .     dconst( 0.021723 ),dconst( 0.018859 ),dconst( 0.015832 ),
+     .     dconst( 0.012644 ),dconst( 0.009297 ),dconst( 0.005791 ),
+     .     dconst( 0.002129 ),dconst( -0.001688 ),dconst( -0.005657 ),
+     .     dconst( -0.009776 ),dconst( -0.014043 ),dconst( 0.000065 ),
+     .     dconst( -0.003767 ),dconst( -0.007735 ),dconst( -0.011837 ),
+     .     dconst( -0.016070 ),dconst( -0.020431 ),dconst( -0.024920 ),
+     .     dconst( -0.029532 ),dconst( -0.034266 ),dconst( -0.039118 ),
+     .     dconst( -0.044086 ),dconst( -0.049167 ),dconst( -0.054357 ),
+     .     dconst( -0.059654 ),dconst( -0.065055 ),dconst( -0.070555 ),
+     .     dconst( -0.076152 ),dconst( -0.081843 ),dconst( -0.087623 ),
+     .     dconst( -0.093489 )/
+     
+      data (ztan_tor(i),i=1,Ndet_tor)
+     .    /dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 ),dconst( 0.000000 ),dconst( 0.000000 ),
+     .     dconst( 0.000000 )/
+
+      data (span_tor(i),i=1,Ndet_tor)
+     .    /dconst(0.024649493624023362),dconst(0.02481631779718454),
+     .     dconst(0.024649493624023362),dconst(0.02481631779718454),
+     .     dconst(0.024965076810271054),dconst(0.02509507907703358),
+     .     dconst(0.024965076810271054),dconst(0.02509507907703358),
+     .     dconst(0.025205709885116494),dconst(0.025296438480925155),
+     .     dconst(0.025205709885116494),dconst(0.025296438480925155),
+     .     dconst(0.025366824319464156),dconst(0.02541652234420565),
+     .     dconst(0.025366824319464156),dconst(0.02541652234420565),
+     .     dconst(0.02544528718067157),dconst(0.025452976149376645),
+     .     dconst(0.02544528718067157),dconst(0.025452976149376645),
+     .     dconst(0.025439551029554645),dconst(0.02540507853306432),
+     .     dconst(0.025439551029554645),dconst(0.02540507853306432),
+     .     dconst(0.025349729477568552),dconst(0.025273776678137905),
+     .     dconst(0.025349729477568552),dconst(0.025273776678137905),
+     .     dconst(0.02517759160550114),dconst(0.025061639886819764),
+     .     dconst(0.02517759160550114),dconst(0.025061639886819764),
+     .     dconst(0.024926475749957207),dconst(0.024772735532673985),
+     .     dconst(0.024926475749957207),dconst(0.024772735532673985),
+     .     dconst(0.024601130395819983),dconst(0.02441243839182976),
+     .     dconst(0.024601130395819983),dconst(0.02441243839182976)/
+
+
+
+      declare_varp(zone_frags)
+
+      @<Memory allocation interface@>
+
+      var_alloc(zone_frags)
+
+      if (detector_total_views > 0) then
+         do view=1,Ndet_pol
+            de_view_algorithm[view]=de_algorithm_uniform
+            de_view_halfwidth[view]=span_pol[view]  // roughly distance between chords
+            r_start = rdet_pol[view]
+            z_start = zdet_pol[view]
+            vc_set(de_view_points[view][de_view_start],r_start,zero,z_start)
+            z_end = rtan_pol[view]
+            r_end = ztan_pol[view]
+            vc_set(de_view_points[view][de_view_end],r_end,zero,z_end)
+            call detector_view_setup(vc_args(de_view_points[view][de_view_start]),de_view_halfwidth[view],de_view_algorithm[view],zone_frags)
+            call add_zone_frags(view,zone_frags)
+         end do
+
+
+         num=Ndet_pol
+         var=de_var_unknown
+         tab_index=zero
+         var_min=zero
+         var_max=zero
+         mult=zero
+         spacing=de_spacing_unknown
+         do i=1,num
+            grp_views_pol[i]=i
+         end do
+         call de_grp_init('Poloidal Lya chords',num,var,tab_index,var_min,var_max,
+     $        mult,spacing,grp_views_pol)
+
+
+         var_free(zone_frags)
+         var_alloc(zone_frags)
+
+         do view=1,Ndet_tor
+            de_view_algorithm[view]=de_algorithm_uniform
+            de_view_halfwidth[view]=span_tor[view]  // roughly distance between chords
+            x_start = xdet_tor[view]
+            y_start = ydet_tor[view]
+            z_start = zdet_tor[view]
+            vc_set(de_view_points[view][de_view_start],x_start,y_start,z_start)
+            x_end = xtan_tor[view]
+            y_end = ytan_tor[view]
+            z_end = ztan_tor[view]
+            vc_set(de_view_points[view][de_view_end],x_end,y_end,z_end)
+            call detector_view_setup(vc_args(de_view_points[view][de_view_start]),de_view_halfwidth[view],de_view_algorithm[view],zone_frags)
+            call add_zone_frags(view+Ndet_pol,zone_frags)
+         end do
+
+         var_free(zone_frags)
+
+         num=Ndet_tor
+         var=de_var_unknown
+         tab_index=zero
+         var_min=zero
+         var_max=zero
+         mult=zero
+         spacing=de_spacing_unknown
+         do i=1,num
+            grp_views_tor[i]=Ndet_pol+i
+         end do
+         call de_grp_init('Toroidal Lya chords',num,var,tab_index,var_min,var_max,
+     $        mult,spacing,grp_views_tor)
+
+
+      end if
+
+      return
+      end
+
+@* INDEX.

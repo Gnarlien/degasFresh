@@ -1,0 +1,52 @@
+@* Arrays for interpolating poloidal flux data.
+
+% $Id: b8459c7f8698691b88e9d301ece4b623d9587f59 $
+
+\ID{$Id: b8459c7f8698691b88e9d301ece4b623d9587f59 $}
+
+Interpolation arrays.
+
+@ Constant definitions.
+
+@m ef_korder 3
+@m ef_korder_rz 5
+@m ef_cross_max 4
+
+@ Array definitions.
+
+@a
+      package_init(ef)
+
+      define_var_pk(ef,ef_nr,INT)
+      define_var_pk(ef,ef_nz,INT)
+      define_var_pk(ef,ef_lim_msegments,INT)
+      
+      define_dimen_pk(ef,ef_psi_ind,ef_nr+ef_korder)
+      define_dimen_pk(ef,ef_r_ind,ef_nr+ef_korder_rz)
+      define_dimen_pk(ef,ef_z_ind,ef_nz+ef_korder_rz)
+      define_dimen_pk(ef,ef_rz_ind,ef_nr*ef_nz)
+      define_dimen_pk(ef,ef_i_ind,ef_nr)
+      define_dimen_pk(ef,ef_lim_ind,ef_lim_msegments)
+      define_dimen_pk(ef,ef_cross_ind,ef_cross_max)
+      
+      define_varp_pk(ef,ef_psi_knot,FLOAT,ef_psi_ind)
+      define_varp_pk(ef,ef_r_knot,FLOAT,ef_r_ind)
+      define_varp_pk(ef,ef_z_knot,FLOAT,ef_z_ind)
+      define_varp_pk(ef,ef_psi_bscoef,FLOAT,ef_rz_ind)
+      define_varp_pk(ef,ef_i_bscoef,FLOAT,ef_i_ind)
+      define_varp_pk(ef,ef_lim_r,FLOAT,ef_lim_ind)
+      define_varp_pk(ef,ef_lim_z,FLOAT,ef_lim_ind)
+      define_varp_pk(ef,ef_lim_psi,FLOAT,ef_lim_ind)
+      define_varp_pk(ef,ef_lim_cross_times,INT,ef_lim_ind)
+      define_varp_pk(ef,ef_lim_cross_wall,INT,ef_cross_ind,ef_lim_ind)
+      define_varp_pk(ef,ef_lim_cross_node,INT,ef_cross_ind,ef_lim_ind)
+
+      define_var_pk(ef,ef_min_r,FLOAT)
+      define_var_pk(ef,ef_max_r,FLOAT)
+      define_var_pk(ef,ef_min_z,FLOAT)
+      define_var_pk(ef,ef_max_z,FLOAT)
+      define_var_pk(ef,ef_psilim,FLOAT)
+      define_var_pk(ef,ef_rma,FLOAT)
+      define_var_pk(ef,ef_zma,FLOAT)
+
+      package_end(ef)

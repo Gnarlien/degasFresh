@@ -1,0 +1,114 @@
+@* Plasma-Material Interaction (PMI) definitions.
+
+% $Id: 50e851d0a56a041ce8d00b02d43563386c632bf2 $
+
+\ID{$Id: 50e851d0a56a041ce8d00b02d43563386c632bf2 $}
+
+Information about plasma-material interaction processes is held in arrays in 
+common blocks.  A plasma-material interaction process is identified by 
+an integer indexing into these arrays.
+
+@f pm_decl integer
+
+@m pmi_generic_no 0
+@m pmi_generic_yes 1
+
+@m pm_args(x) x
+@m pm_dummy(x) x
+@m pm_decl(x) integer x @;
+@m pm_copy(x,y) y=x @;
+@m pm_check(x) (x > 0 && x <= pm_num)
+@m pm_name(x) pmi_name[x]
+@m pm_sy(x)   pmi_sy[x]
+@m pm_reagent(x) pmi_reagent[x]
+@m pm_materials(x) pmi_materials[x]
+@m pm_gen(x) pmi_generic[x]
+@m pm_product_num(x) pmi_product_num[x]
+@m pm_product(x,i)   pmi_product[i,x]
+@m pm_filename(x)    pmi_filename[x]
+@m pm_pmi_type(x) pmi_type[x]
+@m pm_lookup(sy) string_lookup(sy,pmi_sy,pm_num)
+
+@ Length specifications.
+
+@m pm_sy_len 24
+@m pm_name_len 80
+@m pm_type_len 32
+@m pm_product_max 4
+
+@ Variable definitions.
+
+@a
+      package_init(pm)
+
+      define_dimen_pk(pm,pmi_symbol_string,pm_sy_len)
+      define_dimen_pk(pm,pmi_name_string,pm_name_len)
+      define_dimen_pk(pm,pmi_type_string,pm_type_len)
+      define_var_pk(pm,pm_num,INT)
+      define_var_pk(pm,pm_ignore,INT)
+      define_dimen_pk(pm,pmi_ind,pm_num)
+      define_dimen_pk(pm,pmi_filename_string,FILELEN)
+      define_dimen_pk(pm,pmi_product_ind,pm_product_max)
+
+      define_varp_pk(pm,pmi_name,CHAR,pmi_name_string,pmi_ind)
+      define_varp_pk(pm,pmi_type,CHAR,pmi_type_string,pmi_ind)
+      define_varp_pk(pm,pmi_sy,CHAR,pmi_symbol_string,pmi_ind)
+      define_varp_pk(pm,pmi_reagent,INT,pmi_ind)
+      define_varp_pk(pm,pmi_materials,INT,pmi_ind)
+      define_varp_pk(pm,pmi_generic,INT,pmi_ind)
+@#if 0
+      define_varp_pk(pm,pmi_bound_reagent,CHAR,pmi_materials_string,pmi_ind)
+      define_varp_pk(pm,pmi_bound_product,CHAR,pmi_materials_string,pmi_ind)
+@#endif
+      define_varp_pk(pm,pmi_product_num,INT,pmi_ind)
+      define_varp_pk(pm,pmi_product,INT,pmi_product_ind,pmi_ind)
+      define_varp_pk(pm,pmi_filename,CHAR,pmi_filename_string,pmi_ind)
+      define_varlocal_pk(pm,pmi_version,CHAR,string)
+      package_end(pm)
+
+@* PMI class attribute descriptions.
+
+@ Define plasma-material interactions. Prefix is |pm|. 
+
+The identifier |pmi| is
+an integer variable.
+
+\begin{description}
+  \item[|pm_name(pmi)|] Returns the long name (length |pm_name_len|).
+
+  \item[|pm_sy(pmi)|] Returns the symbolic name (length |pm_sy_len|).
+
+  \item[|pm_reagent(pmi)|] Returns the species index (class |sp|)
+of the incident projectile.
+
+  \item[|pm_materials(pmi)|] Returns the materials index (class |ma|) of the 
+target material.
+
+  \item[|pm_gen(pmi)|] Contains the value |pmi_generic_yes| if this |pmi|
+(and its data) can be applied to species
+isotopically equivalent to |pm_reagent(pmi)|; the value |pmi_generic_no|
+indicates that the |pmi| is species-specific.
+
+  \item[|pm_product_num(pmi)|] Number of product particles.
+
+  \item[|pm_product(pmi,i)|] Species index (class |sp|) of the |i|th product
+particle, |i| $ = 1 \rightarrow$ |pm_product_num(pmi)|.
+
+  \item[|pm_filename(pmi)|] Name of netCDF file containing the data 
+(class |pf|) for this |pmi|.
+
+  \item[|pm_pmi_type(pmi)|] Returns the type of plasma-material interaction 
+(length |pm_type_len|).
+\end{description}
+
+@ Internal variables in the PMI class.
+
+\begin{description}
+  \item[|pm_num|] Number of PMI in the reference database.
+\end{description}
+
+@ Routines using PMI.
+
+|pm_lookup(symbol)| Returns the integer PMI number corresponding to
+the symbolic name |symbol|.
+

@@ -1,0 +1,113 @@
+% $Id: a8c540fbd6819e52a510d4f125a0b2910f8018a1 $
+\Title{pvmslave}
+
+
+@* A test program for the geometry routines.
+
+\ID{$Id: a8c540fbd6819e52a510d4f125a0b2910f8018a1 $}
+
+@m FILE 'pvmslave.web'
+@I macros.hweb
+@I pvm.hweb
+@I zone.hweb
+@I sysdep.hweb
+@I string.hweb
+@I random.hweb
+
+@ The main program.
+
+@a
+      program pvm_slave
+      implicit_none_f77
+      implicit_none_f90
+
+      call readfilenames
+      call slave_init
+      call pvm_flights_slave
+
+      stop
+      end
+
+      @<Functions and Subroutines@>
+
+@ Initialize common blocks.
+
+@<Functions...@>=
+      subroutine slave_init
+      implicit_none_f77
+      implicit_none_f90
+      sy_decls
+      logical res
+      
+      res=set_cwd('degas/degas2/SUN')
+      assert(res)
+      call read_geometry
+      call nc_read_elements
+      call nc_read_species
+      call nc_read_background
+      call nc_read_test
+      call nc_read_reactions
+      
+      return
+      end
+      
+@ The controller.  This reads requests for the calculation of flights
+from the master process, does the computation, and sends the results
+back to the master.  It terminates when getting a request for zero
+flights.
+
+@<Functions...@>=
+      subroutine pvm_flights_slave
+
+      define_dimen(temp_ind,2)
+      define_varp(stat1,FLOAT,temp_ind,zone_ind)
+      define_varp(stat2,FLOAT,temp_ind,zone_ind)
+
+      implicit_none_f77
+      zn_common
+      implicit_none_f90
+      integer nstart,num        // Local
+      rn_seed_decl(seed)
+      integer mytid,mastertid,ret,msgtype
+      @<Memory allocation interface@>
+      st_decls
+      real weight1
+      declare_varp(stat1)
+      declare_varp(stat2)
+      
+      var_alloc(stat1)
+      var_alloc(stat2)
+
+      call pvmfmytid(mytid)     // Enroll with PVM
+      call pvmfparent(mastertid) // Who's the master?
+
+loop: continue
+      msgtype=1                 // Receive the request from the master
+      call pvmfrecv(mastertid,msgtype,ret)
+      call pvmfunpack(pvm_int,nstart,1,1,ret)
+      call pvmfunpack(pvm_int,num,1,1,ret)
+      call pvmfunpack(pvm_int,seed,2,1,ret)
+
+      if (num <= 0) goto break  // Quit if nothing to do
+      
+      call do_flights(nstart,num,seed,stat1,weight1,stat2) // Do the computation
+
+      call pvmfinitsend(PVMDEFAULT,ret) // Send the results back to the master
+      call pvmfpack(pvm_real,stat1,2*zn_num,1,ret)
+      call pvmfpack(pvm_real,weight1,1,1,ret)
+      msgtype=2
+      call pvmfsend(mastertid, msgtype,ret)
+      
+      goto loop
+      
+break: continue
+      call pvmfexit(ret)        // Let PVM know
+
+      var_free(stat1)
+      var_free(stat2)
+
+      return
+      end
+
+
+@* INDEX.

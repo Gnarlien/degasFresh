@@ -1,0 +1,163 @@
+@* Sampled origin data for flights.
+
+% $Id: 69fb61539e8c11def8a6a270fbd0d094b6ef28c2 $
+
+\ID{$Id: 69fb61539e8c11def8a6a270fbd0d094b6ef28c2 $}
+
+@I random.hweb
+@I flight.hweb
+
+@ Established this entity so that in parallel runs, the master
+can sample the initial positions and velocities of all flights,
+so that the source descriptions do not have to be propagated
+to all of the slaves.  This was introduced to address a problem
+with the ``snapshot'' source in time dependent runs, in which 
+the source data were occupying more memory than the geometry
+or output, leading to unacceptable memory requirements.  
+
+Subsequent testing showed, however, that this approach was      
+not satisfactory for other runs with puff or plate sources.
+To this end, the |MASTER_SAMPLE| switch was introduced.   Set
+to ``no'' in the Makefile.local, the source class data are 
+broadcast to the slaves and the source particles are sampled
+there.  Set to ``yes'' causes all sampling to be performed on 
+the master; the bulk of the sources arrays are kept only on the
+master.
+
+@m ff_decls integer ff_temp
+
+@m ff_int_number 1
+@m ff_int_source 2
+@m ff_int_source_kseg 3
+@m ff_int_source_xseg 4
+@m ff_int_source_type 5
+@m ff_int_source_root_sp 6
+@m ff_int_pt_sp 7
+@m ff_int_pt_test 8
+@m ff_int_lc_cell 9
+@m ff_int_lc_zone 10
+@m ff_int_lc_face 11
+@m ff_int_lc_cell_next 12
+@m ff_int_lc_zone_next 13
+@m ff_int_lc_sector 14
+@m ff_int_lc_sector_next 15
+@m ff_int_pt_type 16
+@m ff_int_pt_author 17
+
+@m ff_int_max 17
+
+@m ff_float_pt_t 1    // These are exactly the same as |sn_float|;
+@m ff_float_pt_w 2    // Can we use them instead?
+@m ff_float_pt_v1 3
+@m ff_float_pt_v2 4
+@m ff_float_pt_v3 5
+@m ff_float_lc_x1 6
+@m ff_float_lc_x2 7
+@m ff_float_lc_x3 8
+
+@m ff_float_pt_max 8
+
+@m ff_copy(i,j,is,ks,xs,type,rsp,px,rx)
+      ff_particles_int[i][ff_int_number]=j;
+      ff_particles_int[i][ff_int_source]=is;
+      ff_particles_int[i][ff_int_source_kseg]=ks;
+      ff_particles_int[i][ff_int_source_xseg]=xs;
+      ff_particles_int[i][ff_int_source_type]=type;
+      ff_particles_int[i][ff_int_source_root_sp]=rsp;
+      ff_particles_int[i][ff_int_pt_sp]=pt_sp(px);
+      ff_particles_int[i][ff_int_pt_test]=pt_test(px);
+      ff_particles_int[i][ff_int_lc_cell]=lc_cell(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_zone]=lc_zone(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_face]=lc_face(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_cell_next]=lc_cell_next(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_zone_next]=lc_zone_next(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_sector]=lc_sector(pt_loc(px));
+      ff_particles_int[i][ff_int_lc_sector_next]=lc_sector_next(pt_loc(px));
+      ff_particles_int[i][ff_int_pt_type]=pt_type(px);
+      ff_particles_int[i][ff_int_pt_author]=pt_author(px);
+      ff_particles_float[i][ff_float_pt_t]=pt_t(px);
+      ff_particles_float[i][ff_float_pt_w]=pt_w(px);
+      ff_particles_float[i][ff_float_pt_v1]=pt_v(px)[1];
+      ff_particles_float[i][ff_float_pt_v2]=pt_v(px)[2];
+      ff_particles_float[i][ff_float_pt_v3]=pt_v(px)[3];
+      ff_particles_float[i][ff_float_lc_x1]=lc_x(pt_loc(px))[1];
+      ff_particles_float[i][ff_float_lc_x2]=lc_x(pt_loc(px))[2];
+      ff_particles_float[i][ff_float_lc_x3]=lc_x(pt_loc(px))[3];
+      ff_ran_index[i]=rn_index(rx);
+      do ff_temp=0,ran_k-1;
+         ff_ran_array[i][ff_temp]=rn_array(rx)[ff_temp];
+      end do @;
+
+ @m ff_label_init(j,fx,rel_wt)                         // Replaces |fl_label| and |fl_init|
+      fl_number(fx)=ff_particles_int[j][ff_int_number];
+      fl_source(fx)=ff_particles_int[j][ff_int_source];
+      fl_source_kseg(fx)=ff_particles_int[j][ff_int_source_kseg];
+      fl_source_xseg(fx)=ff_particles_int[j][ff_int_source_xseg];
+      fl_source_type(fx)=ff_particles_int[j][ff_int_source_type];
+      fl_source_root_sp(fx)=ff_particles_int[j][ff_int_source_root_sp];
+      pt_sp(fl_origin(fx))=ff_particles_int[j][ff_int_pt_sp];
+      pt_test(fl_origin(fx))=ff_particles_int[j][ff_int_pt_test];
+      vc_set(lc_x(pt_loc(fl_origin(fx))),ff_particles_float[j][ff_float_lc_x1],
+             ff_particles_float[j][ff_float_lc_x2],ff_particles_float[j][ff_float_lc_x3]);
+      lc_cell(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_cell];
+      if (lc_cell(pt_loc(fl_origin(fx))) == int_uninit) then;
+         lc_set_a(pt_loc(fl_origin(fx)));
+         assert((zn_type(lc_zone(pt_loc(fl_origin(fx)))) == zn_vacuum)
+              || (zn_type(lc_zone(pt_loc(fl_origin(fx)))) == zn_plasma));
+      else;
+         lc_zone(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_zone];
+         lc_face(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_face];
+         lc_cell_next(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_cell_next];
+         lc_zone_next(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_zone_next];
+         lc_sector(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_sector];
+         lc_sector_next(pt_loc(fl_origin(fx)))=ff_particles_int[j][ff_int_lc_sector_next];
+      end if;
+      pt_type(fl_origin(fx))=ff_particles_int[j][ff_int_pt_type];
+      pt_author(fl_origin(fx))=ff_particles_int[j][ff_int_pt_author];
+      pt_t(fl_origin(fx))=ff_particles_float[j][ff_float_pt_t];
+      rel_wt=ff_particles_float[j][ff_float_pt_w];
+      pt_w(fl_origin(fx))=one;
+      vc_set(pt_v(fl_origin(fx)),ff_particles_float[j][ff_float_pt_v1],
+             ff_particles_float[j][ff_float_pt_v2],ff_particles_float[j][ff_float_pt_v3]);
+      rn_index(fl_rand(fx))=ff_ran_index[j];
+      do ff_temp=0,ran_k-1;
+         rn_array(fl_rand(fx))[ff_temp]=ff_ran_array[j][ff_temp];
+      end do;
+      fl_pointer(fx)=1;
+      pt_copy(fl_origin(fx),fl_current(fx)) @;
+
+@ Variable definitions
+
+@a
+      package_init(ff)
+
+      define_var_pk(ff,ff_particles_dim,INT)
+      define_var_pk(ff,ff_number_particles,INT)
+
+      define_dimen_pk(ff,ff_particles_ind,ff_particles_dim)
+      define_dimen_pk(ff,ff_pt_float_ind,ff_float_pt_max)
+      define_dimen_pk(ff,ff_int_ind,ff_int_max)
+      define_dimen_pk(ff,ff_ran_ind,0,ran_k-1)
+
+
+      define_varp_pk(ff,ff_particles_int,INT,ff_int_ind,ff_particles_ind)
+      define_varp_pk(ff,ff_particles_float,FLOAT,ff_pt_float_ind,ff_particles_ind)
+      define_varp_pk(ff,ff_ran_index,INT,ff_particles_ind)
+      define_varp_pk(ff,ff_ran_array,FLOAT,ff_ran_ind,ff_particles_ind)
+
+      package_end(ff)
+
+@* Description of the flight fragment data structures.
+
+@ Prefix used for these structures is |ff|.
+
+\begin{description}
+  \item[|ff_particles_dim|] Explicit variable used to track the size of the arrays.
+  \item[|ff_number_particles|] Number of particles contained in the fragment.
+  \item[|ff_particles_int|] Integer parameters associated with the particles.
+  \item[|ff_particles_float|] Floating point parameters associated with the particles.
+  \item[|ff_ran_index|] Index into the random number sequence for each particle.
+  \item[|ff_ran_array|] Random number sequence for each particle.
+\end{description}
+
+      

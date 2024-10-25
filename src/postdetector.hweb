@@ -1,0 +1,40 @@
+@* Specification for images produced by postdetector.  Set up primarily for convenience
+in using netCDF formatted files.
+
+% $Id: ddf8800dc36ff832a3b40ca102fa078a124493d3 $
+\ID{$Id: ddf8800dc36ff832a3b40ca102fa078a124493d3 $}
+
+@ Parameters.
+
+@m po_label_string_length 40   // Describes the image
+@m po_unit_string_length 20    // Units      
+@m po_format_string_length 10  // Format specifier
+
+@ Array definitions.
+
+@a
+      package_init(po)
+
+      define_var_pk(po,po_nx,INT)
+      define_dimen_pk(po,po_x_ind,po_nx)
+      define_var_pk(po,po_ny,INT)
+      define_dimen_pk(po,po_y_ind,po_ny)
+
+      define_var_pk(po,po_num_dep_vars,INT)
+      define_dimen_pk(po,po_dep_var_ind,po_num_dep_vars)
+
+      define_dimen_pk(po,po_label_string,po_label_string_length)
+      define_dimen_pk(po,po_unit_string,po_unit_string_length)
+      define_dimen_pk(po,po_format_string,po_format_string_length)
+
+      define_varp_pk(po,po_xscale,FLOAT,po_x_ind,po_dep_var_ind)
+      define_varp_pk(po,po_yscale,FLOAT,po_y_ind,po_dep_var_ind)
+      define_varp_pk(po,po_image_data,FLOAT,po_x_ind,po_y_ind,po_dep_var_ind)
+      define_varp_pk(po,po_image_labels,CHAR,po_label_string,po_dep_var_ind)
+      define_varp_pk(po,po_image_units,CHAR,po_unit_string,po_dep_var_ind)
+      define_varp_pk(po,po_image_formats,CHAR,po_format_string,po_dep_var_ind)
+
+
+      package_end(po)
+
+      

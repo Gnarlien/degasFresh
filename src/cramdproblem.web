@@ -1,0 +1,36 @@
+% $Id: 6689691863808c8e2090d1e005fb62c56e8cb899 $
+\Title{cramdproblem}
+
+@* Replace placeholder problemfile data with real CRAMD data. Reads in the
+plasma description, calls CRAMD routines, and fills in problem data in the
+problemfile.
+
+\ID{$Id: 6689691863808c8e2090d1e005fb62c56e8cb899 $}
+
+@m FILE 'cramdproblem.web'
+
+@I macros.hweb
+
+
+@ The main program.
+
+
+@a 
+      program cramdproblem
+      implicit_none_f77
+      implicit_none_f90
+
+      call readfilenames
+
+      call read_geometry
+
+      call nc_read_species
+      call nc_read_materials
+      call nc_read_reactions
+      call nc_read_pmi
+      call nc_read_problem
+      call nc_read_background
+      call add_cramd_data
+
+      stop
+      end

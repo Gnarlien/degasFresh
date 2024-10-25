@@ -1,0 +1,464 @@
+% $Id: 64e535e9528e79b91d099268184f4503c4eebd88 $
+\Title{flighttest}
+
+@* Main executable for DEGAS 2. The name is an historical holdover from
+its original purpose as a geometry test routine.
+
+\ID{$Id: 64e535e9528e79b91d099268184f4503c4eebd88 $}
+
+@m FILE 'flighttest.web'
+
+@m SCALE_FLIGHTS 0
+@m COUETTE 0
+
+@#if (COUETTE == 1)
+
+@m bgk_max 10
+@m bgk_cvg_dens const(1.,-8)
+@m bgk_cvg_pres const(1.,-8)
+
+@#else
+
+@m bgk_max 5
+@m bgk_cvg_dens const(5.,-5)
+@m bgk_cvg_pres const(5.,-5)
+
+@#endif
+
+
+@I macros.hweb
+@I sysdep.hweb
+@I string.hweb
+@I background.hweb
+@I reaction.hweb
+@I sources.hweb
+@I tally.hweb
+@I output.hweb
+@I problem.hweb
+@I random.hweb
+@I mpi.hweb
+@I flight_frag.hweb
+
+@ The main program.
+
+@a
+      program flight_test
+
+      implicit_none_f77
+      mp_common
+      implicit_none_f90
+      mp_decls
+
+      integer standalone      // Local
+
+@#if 0
+      mpi_init
+@#else
+      standalone=TRUE
+      call degas2_mpi_init(standalone,MPI_COMM_WORLD)
+@#endif
+
+      if (mpi_master) call readfilenames
+      call degas_init       // Eventually separate out |nc_read_background|
+      call bgk_flighttest
+
+@#if 0
+      mpi_end
+@#else
+      call degas2_mpi_end(standalone)
+@#endif
+      
+      stop
+      end
+
+      @<Functions and Subroutines@>
+
+@* Controlling subroutine with BGK iteration mechanics.
+
+@m bgk_loop #:0
+
+@<Functions...@>=
+      subroutine bgk_flighttest
+
+@#if (SCALE_FLIGHTS == 1)
+      define_varp(original_nflights,INT,source_grp_ind)
+@#endif
+      define_varp(back_pressure,FLOAT,background_ind,bk_plasma_ind)
+
+      implicit_none_f77
+      zn_common
+      rc_common
+      pr_common
+      bk_common
+      so_common
+      ff_common
+      mp_common
+      implicit_none_f90
+
+      integer i,bgk,iter_bgk,bgk_iteration,is
+@#if (SCALE_FLIGHTS == 1)
+      integer iterations,sets,i_set,k,k_max      // flight scaling
+@#endif
+      rn_seed_decl(io_seed)
+
+@#if (SCALE_FLIGHTS == 1)
+      declare_varp(original_nflights)
+@#endif
+      declare_varp(back_pressure)
+
+      @<Memory allocation interface@>
+      mp_decls
+      rn_decls
+/*
+   Need to separate these two since slaves
+   no longer have access to |so_common|.
+*/
+      if (mpi_master) then
+         if (so_restart == TRUE) call nc_read_output
+      end if
+
+      if (mpi_master) then
+         bgk=FALSE
+
+         do i=1,pr_reaction_num
+            if (rc_reaction_type(pr_reaction(i)) == 'bgk_elastic' ) bgk=TRUE
+         end do
+
+         iter_bgk=0      
+         call decimal_to_seed(so_seed_decimal,rn_seed_args(io_seed))
+/*
+   Moved this up from |bgk_test|
+*/
+         var_alloc(back_pressure)
+      end if
+
+bgk_loop: continue
+
+      if (mpi_master) then
+@#if (SCALE_FLIGHTS == 1)
+/*
+   This is a 3rd generation attempt at scaling the number of flights
+   during the BGK iteration process. The basic idea is that the initial
+   iterations involve changes much larger than the statistical
+   variations needed in the end, so fewer flights are required
+   for them.  The progress towards convergence seen in this set
+   of runs suggests dividing the total number of iterations into
+   sets of 3, with each set having half of the flights of the
+   subsequent one, and with only the last run being done at full size.
+*/
+         if (bgk == TRUE) then
+            if (iter_bgk == 0) then
+               var_alloc(original_nflights)
+               iterations=bgk_max+1
+               if (iterations == 1) then
+                  sets=0
+                  k_max=1
+               else
+                  sets=((iterations-2)/3)+1
+                  k_max=(iterations-1)-3*(sets-1)
+               end if
+               i_set=sets
+               k=k_max
+            end if
+            do is=1,so_grps
+               if (iter_bgk == 0) then
+                  original_nflights[is]=so_nflights(is)
+               end if
+               assert(i_set >= 0)
+               so_nflights(is)=max(2,original_nflights[is]/2**i_set)
+            end do
+            k--
+            if (k == 0) then
+               i_set--
+               if (i_set == 0) then
+                  k_max=1
+               else
+                  k_max=3
+               end if
+               k=k_max
+            end if
+         end if
+@#endif
+         call do_flights_master(io_seed)
+/*
+   Need to manage seeds out here so that consecutive BGK iterations
+   start with different seeds and are, thus, uncorrelated.
+*/
+         call next_seed(1,rn_seed_args(io_seed))
+      else
+         call do_flights_slave
+      end if
+
+      if (mpi_master) then
+         call bgk_test(bgk,iter_bgk,bgk_iteration,back_pressure)
+         iter_bgk++
+      end if
+/*
+   This call to |clear_output| was previously outside the 
+   BGK loop.  But, the output arrays are reallocated on
+   every iteration, so they need to be deallocated inside
+   the loop to make each iteration very much like a full run.
+   For this reason, we also reset the |so_restart| flag. If
+   we don't the output arrays won't be allocated in 
+   |do_flights_master|.
+*/
+      if (mpi_master) then
+         call clear_output
+         so_restart=FALSE
+      end if
+
+@#if MPI
+      call MPI_bcast(bgk_iteration,1,mpi_int,mpi_degas2_root,comm_world_dup,mpi_err)
+@#endif
+      if (bgk_iteration == TRUE) then
+         cm_mpibcastna
+         bk_mpibcastna
+/*
+   Source data kept only on master now.
+*/
+@#if 0
+         so_mpibcastna
+@#endif 
+         go to bgk_loop
+      end if
+
+      if (mpi_master) then
+@#if (SCALE_FLIGHTS == 1)
+         if (bgk == TRUE) then
+            var_free(original_nflights)
+         end if
+@#endif
+         var_free(back_pressure)
+      end if
+/*
+   These were originally in subroutines |clear_output| and
+   |do_flights_slave|.  But, that needed them intact for
+   subsequent BGK iterations.
+
+   Note that in the |MASTER_SAMPLE| = no case, with MPI,
+   the |flight_frag| arrays are not allocated on the master
+   and, hence, cannot be freed.
+*/
+@#if (MPI && !MASTER_SAMPLE)
+      if (!mpi_master) then
+         var_free(ff_particles_int)
+         var_free(ff_particles_float)
+         var_free(ff_ran_index)
+         var_free(ff_ran_array)
+      end if
+@#else
+      var_free(ff_particles_int)
+      var_free(ff_particles_float)
+      var_free(ff_ran_index)
+      var_free(ff_ran_array)
+@#endif
+
+      return
+      end
+
+@* Examine BGK parameters for convergence. This currently also writes
+out the file |density.out|.
+
+@m back_pres(back,zone) back_pressure[back,zn_pointer(zone)]
+
+@<Functions...@>=
+      subroutine bgk_test(bgk,iter_bgk,bgk_iteration,back_pressure)
+
+      implicit_none_f77
+      zn_common                                     // Common
+      sp_common
+      pr_common
+      bk_common
+      tl_common
+      ou_common
+      implicit_none_f90
+
+      integer bgk,iter_bgk                          // Input
+      integer bgk_iteration                         // Output
+      real back_pressure[*][bk_num]
+      integer i,j,have_pressure,test,zone,back      // Local
+      integer index_parameters[tl_index_max]
+      real dummy,total_n,tot_dn,delta_n,total_p,tot_dp,delta_p,
+     $     density,dens_rsd,pressure,pres_rsd,edrift,temperature,
+     $     dens_scale
+@#if COUETTE
+      real xy_stress,xy_stress_rsd,tot_density,tot_volume
+@#endif
+      character*2 iter_char
+      vc_decl(vel_test)
+
+      real extract_output_datum                   // External 
+      external extract_output_datum
+
+      @<Memory allocation interface@>
+      st_decls
+
+      bgk_iteration=FALSE
+      if (bgk == TRUE && iter_bgk == 0) then
+         if (bgk_max > 0) bgk_iteration=TRUE
+         open(unit=diskout+2,file='cvg_global.txt',status='unknown') 
+/*
+   Originally declared |back_pressure| in this routine, but
+   values were getting lost in between calls.  Moved up one
+   level and put in the argument list instead.
+*/
+         do i=1,bk_num
+            do j=1,zone_type_num[zn_plasma]
+               back_pres(i,j)=real_uninit
+            end do
+         end do
+      end if
+/* 
+   Write |density.out| file
+*/
+      if (bgk == FALSE) then
+         open(unit=diskout,file='density.out',status='unknown')
+      else
+         assert(iter_bgk < 100)      // Size of |iter_char|
+         write(iter_char,'(i2.2)') iter_bgk
+         open(unit=diskout,file='density'\/iter_char\/'.out',status='unknown')
+      end if
+      dummy=zero
+      if (string_lookup('neutral pressure',tally_name,tl_num) > 0) then
+         have_pressure=TRUE
+      else
+         have_pressure=FALSE   // Not kept with minimal set of scores
+      end if
+
+      do test=2,pr_test_num    // Exclude ``0'' test species
+         index_parameters[tl_index_test]=test
+
+         total_n=zero    // BGK parameters
+         tot_dn=zero
+         delta_n=zero
+         total_p=zero
+         tot_dp=zero
+         delta_p=zero
+
+@#if COUETTE
+         tot_volume=zero
+         do zone=1,zn_num
+            if (zone_type[zone] == zn_plasma) then
+               tot_volume+=zn_volume(zone)
+            end if
+         end do
+         tot_density=extract_output_datum(index_parameters,1,
+     $              out_post_all,o_mean,'total density')
+         tot_density/=tot_volume
+         dens_scale=const(1.,20)/tot_density
+@#else
+         dens_scale=one
+@#endif
+         do zone=1,zn_num
+            if (zone_type[zone] == zn_plasma) then
+
+               index_parameters[tl_index_zone]=zone
+ 
+               density=extract_output_datum(index_parameters,1,
+     $              out_post_all,o_mean,'neutral density')
+               dens_rsd=extract_output_datum(index_parameters,1,
+     $              output_all,o_var,'neutral density')
+               if (have_pressure == TRUE) then
+                  pressure=extract_output_datum(index_parameters,1,
+     $                 out_post_all,o_mean,'neutral pressure')
+                  pres_rsd=extract_output_datum(index_parameters,1,
+     $                 output_all,o_var,'neutral pressure')
+               else
+                  pressure=zero
+                  pres_rsd=zero
+               end if
+               vel_test[1]=extract_output_datum(index_parameters,1,
+     $              out_post_all,o_mean,'neutral flux vector')
+               vel_test[2]=extract_output_datum(index_parameters,2,
+     $              out_post_all,o_mean,'neutral flux vector')
+               vel_test[3]=extract_output_datum(index_parameters,3,
+     $              out_post_all,o_mean,'neutral flux vector')
+@#if COUETTE
+               xy_stress=extract_output_datum(index_parameters,1,
+     $              out_post_all,o_mean,'xy stress tensor')
+               xy_stress_rsd=extract_output_datum(index_parameters,1,
+     $              out_post_all,o_var,'xy stress tensor')
+               xy_stress*=dens_scale
+@#endif
+               if (density != zero) then
+                  vc_scale(one/density,vel_test,vel_test)
+/*
+   Subtract drift energy from total energy to get temperature. 
+   In the case of single flights, these are equal, and we have to
+   allow for small or even negative temperatures.
+*/
+                  edrift=half*sp_m(pr_test(test))*vc_abs2(vel_test)
+                  temperature=(pressure/density) - edrift/const(1.5)
+                  if (temperature < const(-1.,-30)) then
+                     write(stderr,*) ' temperature = ',temperature,' at zone = ',zone
+                     write(stderr,*) ' pressure = ',pressure,', density = ',density
+                     write(stderr,*) ' vel_test = ',vel_test
+                  end if
+                  if (temperature <= const(1.,-30)) temperature=const(1.,-30)
+@#if COUETTE
+                  xy_stress-=
+     $                 dens_scale*density*sp_m(pr_test(test))*vel_test[1]*vel_test[2]
+@#endif
+               else
+                  temperature=zero
+               endif
+@#if COUETTE
+               write(diskout,'(2i6,1p,6e13.4)') zone_index[zone][1],
+     $              zone_index[zone][2],dens_scale*density,dens_rsd,dens_scale*pressure,pres_rsd,
+     $              xy_stress,xy_stress_rsd
+@#else
+               write(diskout,'(2i6,1p,6e13.4)') zone_index[zone][1],
+     $              zone_index[zone][2],dens_scale*density,dens_rsd,dens_scale*pressure,pres_rsd,
+     $              dummy,dummy
+@#endif
+/*   
+   Compute global density and pressure changes for BGK iterations.
+*/
+               if (bgk == TRUE) then
+                  do back=1,pr_background_num 
+                     if (pr_test(test) == pr_background(back)) then 
+                        if (bk_n(back,zone) != zero) then
+                           total_n+=dens_scale*density*zn_volume(zone)
+                           delta_n=abs(bk_n(back,zone)-dens_scale*density)
+                           tot_dn+=delta_n*zn_volume(zone)
+                        end if
+                        if ((back_pres(back,zone) != zero) 
+     $	                 && (back_pres(back,zone) != real_uninit)) then
+                           total_p+=dens_scale*pressure*zn_volume(zone)
+                           delta_p=abs(back_pres(back,zone)-dens_scale*pressure)
+                           tot_dp+=delta_p*zn_volume(zone)
+                        end if 
+
+                        bk_n(back,zone)=dens_scale*density
+                        back_pres(back,zone)=dens_scale*pressure
+                        bk_temp(back,zone)=temperature
+                        vc_set(bk_v(back,zone),vel_test[1],vel_test[2],
+     $                       vel_test[3])
+                     end if  
+                  end do        // Over background
+               end if           // BGK
+            end if              // Plasma zone
+         end do                 // Over zones
+
+         
+         if (iter_bgk > zero && tot_dp*tot_dn > zero) then
+            assert(total_n > zero)
+            assert(total_p > zero)
+            write(diskout+2,'(2x,i2,3x,i3,2(3x,f8.5))') 
+     $           iter_bgk,test,tot_dn/total_n,
+     $           tot_dp/total_p
+            if (((tot_dn/total_n > bgk_cvg_dens)
+     $           || (tot_dp/total_p > bgk_cvg_pres))
+     $           && (iter_bgk < bgk_max)) then
+               bgk_iteration=TRUE
+            end if
+         end if
+      end do                    // Over test
+
+      close(unit=diskout)
+      if (bgk == TRUE) call write_background
+
+      return
+      end
+
+@* INDEX.

@@ -1,0 +1,362 @@
+% $Id: ae4753aa5924b34589d0ec19034d4f84b98c6281 $
+\Title{DEGAS Initialization Routine}
+
+@* DEGAS initialization routine.
+
+\ID{$Id: ae4753aa5924b34589d0ec19034d4f84b98c6281 $}
+
+@m FILE 'degasinit.web'
+
+@I macros.hweb
+@I problem.hweb
+@I reactiondata.hweb
+@I pmidata.hweb
+@I species.hweb
+@I materials.hweb
+@I pmi.hweb
+@I netcdf.hweb
+@I string.hweb
+@I readfilenames.hweb
+@I sysdep.hweb
+@I reaction.hweb
+@I pmiformat.hweb
+@I mpi.hweb
+@I tally.hweb
+@I output.hweb
+
+@ The main program.
+
+@a
+      @<Functions and subroutines@>
+
+@ Initialize common blocks.
+
+@<Functions...@>=
+      subroutine degas_init
+      implicit_none_f77
+      mp_common
+      implicit_none_f90
+      mp_decls
+
+      call read_geometry
+      call nc_read_elements
+      call nc_read_species
+      call nc_read_reactions
+      call nc_read_materials
+      call nc_read_pmi
+      call nc_read_problem
+      call nc_read_background
+      call nc_read_tally
+
+      call read_cramd_data
+
+@#if 0
+      call nc_read_output
+@#endif
+      
+      return
+      end
+
+@ MPI initialization routine.  Expanded this from the original in |mpi.hweb|
+and renamed to avoid confusion. 
+
+The primary reason for the expansion is the generalization of the mechanism
+used to communicate results from the slaves to the master at the end of a
+run (at the end of each source group, actually).  In the original implementation,
+all slaves attempted to send their data directly to the master when done.
+For more than $\sim 16$ slaves, the resulting collisions significantly
+degraded the scaling of the overall simulation with increasing number
+of slaves.
+
+The revised mechanism now divides this up into multiple transmission
+steps.  The maximum number of steps is specified via the |MPI_max_levels|
+parameter below.  At each level, a subset of the slaves are identified
+as ``meta-slaves''; they accumulate the data from the other slaves (and
+their own data).  At the next level, a subset of these slaves is 
+set as meta-slaves for that level, and the process repeats.  At the
+last level, the master is the only meta-slave.  Once the non-meta-slaves
+at each level have sent their data, they begin waiting for the next source
+group or a run termination signal.
+
+The identification of the meta-slaves is contained in the |slave_map|,
+which is established below.  Alternative methods can be used to fill
+it, if desired; the subsequent machinery is independent of how this was
+done.
+
+If there are too few slaves (effectively $< 9$ with |MPI_max_levels| = 3
+and using the procedure below), fewer levels are used, with actual value 
+being |mpi_nlevels|.  The value of |MPI_max_levels| can in principle be
+tuned for a particular number of processors and network.
+
+@m MPI_max_levels 3
+
+@<Functions...@>=
+@#if MPI
+      subroutine degas2_mpi_init(standalone,comm_world)	
+
+      define_dimen(slave_ind,mpi_nslaves)
+      define_varp(meta_slave_ranks,INT,slave_ind)
+
+      implicit_none_f77
+      mp_common
+      implicit_none_f90
+
+      integer standalone,comm_world                      // Input
+      integer n_meta_slaves,ilevel,islave,world_group,   // Local
+     $        last_meta_slave
+      mp_decls
+      @<Memory allocation interface@>
+
+      declare_varp(meta_slave_ranks)
+      mpi_err=-1
+
+      if (standalone == TRUE) then
+         mpi_init
+      else
+         mpi_degas2_root=0;
+         call MPI_Comm_dup(comm_world,comm_world_dup,mpi_err) ;
+         call MPI_comm_rank(comm_world_dup, mpi_rank, mpi_err);
+         call MPI_comm_size(comm_world_dup, mpi_size, mpi_err) @;
+      end if
+
+      mpi_nslaves=mpi_size-1
+/*
+   Set the number of meta-slaves so that at each level the number of slaves 
+   transmitting data to a given meta-slave is the same.  Compute this first
+   using the parameter set above.  The procedure only makes sense if each
+   meta-slave gets data from two slaves (including itself), hence the 
+   subsequent test.  If the test fails, compute the maximum value possible
+   for |mpi_nlevels| based on |mpi_nslaves| and |n_meta_slaves| $= 2$.
+*/
+      n_meta_slaves=int((areal(mpi_nslaves))**(one/areal(MPI_max_levels)))
+      if (n_meta_slaves < 2) then
+         mpi_nlevels=max(int(log(areal(mpi_nslaves))/log(two)),1)
+         n_meta_slaves=int((areal(mpi_nslaves))**(one/areal(mpi_nlevels)))
+      else
+         mpi_nlevels=MPI_max_levels
+      end if
+      var_alloc(mpi_slave_map)
+      assert((n_meta_slaves > 0) && (n_meta_slaves <= mpi_nslaves))
+/*
+   Have to split up the setting of |mpi_slave_map| into separate 
+   |ilevel| equal 1 and not equal 1 cases to avoid accessing
+   |mpi_slave_map(0)|.
+*/
+      ilevel=1
+      do islave=1,mpi_nslaves
+         if (mpi_nlevels == 1) then
+            mpi_slave_map_m(ilevel,islave)=mpi_degas2_root
+         else
+            if (mod(islave,n_meta_slaves**ilevel) == 0) then
+               mpi_slave_map_m(ilevel,islave)=islave  // A meta-slave
+            else 
+               mpi_slave_map_m(ilevel,islave)   
+     $              =(islave/(n_meta_slaves**ilevel)+1)*(n_meta_slaves**ilevel)
+/*
+   In the likely event that the division of slaves doesn't work out evenly,
+   just assign any leftover slaves to the last meta-slave.
+*/
+               if (mpi_slave_map_m(ilevel,islave) > mpi_nslaves) 
+     $            mpi_slave_map_m(ilevel,islave)=mpi_slave_map_m(ilevel,islave-1)
+            end if
+         end if
+      end do
+   
+      if (mpi_nlevels > 1) then
+         do ilevel=2,mpi_nlevels
+            last_meta_slave=int_unused
+            do islave=1,mpi_nslaves
+               if (mpi_slave_map_m(ilevel-1,islave) == islave) then 
+/*
+   Was a meta-slave at the previous level and needs
+   to know where to send its data.
+*/
+                  if (ilevel == mpi_nlevels) then
+                     mpi_slave_map_m(ilevel,islave)=mpi_degas2_root
+                  else
+                     if (mod(islave,n_meta_slaves**ilevel) == 0) then
+                        mpi_slave_map_m(ilevel,islave)=islave  // A meta-slave
+                        last_meta_slave=islave
+                     else 
+                        mpi_slave_map_m(ilevel,islave)   
+     $                       =(islave/(n_meta_slaves**ilevel)+1)*(n_meta_slaves**ilevel)
+                        if (mpi_slave_map_m(ilevel,islave) > mpi_nslaves) then
+                           assert(last_meta_slave != int_unused)
+                           mpi_slave_map_m(ilevel,islave)=last_meta_slave
+                        end if
+                     end if
+                  end if
+               else
+/*
+   Was {\em not} a meta-slave at the previous level and, thus,
+   has no data to send.
+*/
+                  mpi_slave_map_m(ilevel,islave)=int_unused
+               end if
+            end do
+         end do 
+      end if
+/*
+   Set up communicators consisting of the meta-slaves at each
+   level. Just use the value of |mpi_slave_map| to identify
+   the meta-slaves so that we don't have to change this code
+   if the algorithm used in setting up the slave map changes.
+*/
+      var_alloc(mpi_meta_slave_comms)
+      var_alloc(mpi_meta_slave_groups)
+      var_alloc(meta_slave_ranks)
+/*
+   This call gives us a reference for the entire group
+   of processors.
+*/
+      call mpi_comm_group(comm_world_dup,world_group,mpi_err)
+      if (mpi_nlevels > 1) then
+         do ilevel=1,mpi_nlevels-1
+            n_meta_slaves=0
+            do islave=1,mpi_nslaves
+               if (mpi_slave_map_m(ilevel,islave) == islave) then
+                  n_meta_slaves++
+                  meta_slave_ranks(n_meta_slaves)=islave
+               end if
+            end do
+            assert(n_meta_slaves > 0)
+/*
+   Set up a group consisting of only the meta-slaves at |ilevel|.
+*/
+            call mpi_group_incl(world_group,n_meta_slaves,meta_slave_ranks,
+     $           mpi_meta_slave_groups[ilevel],mpi_err)
+/*
+   Now create the corresponding communicator.  Note that all processors
+   have to call this routine, regardless of whether or not they are in
+   one of these communicators.  However, the result will be
+   |MPI_COMM_NULL| on those that are not.
+*/
+            call mpi_comm_create(comm_world_dup,mpi_meta_slave_groups[ilevel],
+     $           mpi_meta_slave_comms[ilevel],mpi_err)
+         end do
+      end if
+
+      var_free(meta_slave_ranks)
+
+      return
+      end
+
+@#else
+      subroutine degas2_mpi_init(standalone)
+      integer standalone
+// dummy
+      return
+      end
+@#endif
+
+@ MPI finalization routine.  Expanded from original in |mpi.hweb| and
+renamed to avoid confusion.
+
+@<Functions...@>=
+@#if MPI
+      subroutine degas2_mpi_end(standalone)
+      implicit_none_f77
+      mp_common
+      implicit_none_f90
+      integer standalone       // Input
+      integer ilevel           // Local
+      mp_decls
+      @<Memory allocation interface@>
+
+      var_free(mpi_slave_map)
+      if (mpi_nlevels > 1) then
+         do ilevel=1,mpi_nlevels-1
+/*
+   Unlike the call to |mpi_comm_create|, only need to
+   free a communicator on those processors that belong
+   to it.  The simplest check is to compare with |MPI_COMM_NULL|.
+*/
+            if (mpi_meta_slave_comms[ilevel] != MPI_COMM_NULL) 
+     $           call mpi_comm_free(mpi_meta_slave_comms[ilevel],mpi_err)
+            call mpi_group_free(mpi_meta_slave_groups[ilevel],mpi_err)
+         end do
+      end if
+      var_free(mpi_meta_slave_comms)
+      var_free(mpi_meta_slave_groups)
+
+      if (standalone == TRUE) then
+         mpi_end
+      end if
+
+      return
+      end
+
+@#else
+      subroutine degas2_mpi_end(standalone)
+      integer standalone
+// dummy
+      return
+      end
+@#endif
+
+      
+@ Function to extract data from output arrays.
+
+@<Functions...@>=
+      function extract_output_datum(index_parameters,icomp,scores,mom,name)
+
+      implicit_none_f77
+      pr_common                                  // Common
+      tl_common
+      implicit_none_f90
+      
+      tl_decls
+
+      real extract_output_datum                  // Function
+      integer index_parameters[tl_index_max]     // Input
+      integer icomp,mom
+      real scores[0:*][o_mean:o_var]  
+      character*(*) name
+      integer tally_number,i,element             // Local
+      integer ind_val[tl_rank_max]
+
+      st_decls
+
+      tally_number=string_lookup(name,tally_name,tl_num)
+      assert(tally_number > 0)
+      assert(icomp <= tally_dep_var_dim[tally_number])
+      
+      do i=1,tl_rank_max
+         if (i <= tally_rank[tally_number]) then
+            ind_val[i]=index_parameters[tally_indep_var[tally_number][i]]-1
+            assert(ind_val[i] >= 0 
+     $           && ind_val[i] < tally_tab_index[tally_number][i])
+         else
+            ind_val[i]=0
+         end if
+      end do
+
+      element=out_array_index(icomp,ind_val,tally_number)
+      extract_output_datum=scores[element][mom]
+
+      return
+      end
+
+@* Check tally number and type.  This used to be a simple macro, but
+transformed it into code to avoid possibly referencing |tally_type(0)|.
+Inserted into this file since the macro is only invoked by stand-alone
+post-processors.
+
+@<Functions...@>=
+      function check_tally(tl_dummy(x))
+      implicit_none_f77
+      pr_common
+      tl_common
+      implicit_none_f90
+      logical check_tally    // Function
+      tl_decl(x)            // Input
+
+      check_tally=.false.
+      if (x <= 0 || x > tl_num) return
+      if (tally_type(x) <= 0 || tally_type(x) > tl_type_max) return
+      check_tally=.true.
+
+      return
+      end
+
+@* INDEX.

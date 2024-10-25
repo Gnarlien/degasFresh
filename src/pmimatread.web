@@ -1,0 +1,318 @@
+% $Id: 6f02622774a5a72312f3c4d2251a79c0fa22788d $
+\Title{pmimattread}
+
+@* Introduction.
+
+\ID{$Id: 6f02622774a5a72312f3c4d2251a79c0fa22788d $}
+
+Introduction\ldots
+
+@m FILE 'pmimatread.web'
+
+@I macros.hweb
+@I readfilenames.hweb
+@I netcdf.hweb
+@I species.hweb
+@I sysdep.hweb
+@I materials.hweb
+@I pmi.hweb
+@I problem.hweb
+@I reactiondata.hweb
+@I pmidata.hweb
+@I string.hweb
+@I vector.hweb
+@I tally.hweb
+@I output.hweb
+@I reaction.hweb
+@I pmiformat.hweb
+@I mpi.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Read in data from netcdf file \verb+materials.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_materials
+      implicit_none_f77
+      ma_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      integer fileid
+      character *FILELEN tempfile  //local
+      ma_ncdecl
+      nc_decls
+      mp_decls
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile =  filenames_array[materialsfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        materials_version,len(materials_version),nc_stat)
+
+         ma_ncread(fileid)
+      
+         call ncclose(fileid,nc_stat)
+      end if
+      
+      ma_mpibcast
+
+      return
+      end
+
+@ Read in data from netcdf file \verb+pmi.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_pmi
+      implicit_none_f77
+      pm_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      integer fileid
+      character *FILELEN tempfile  //local
+      pm_ncdecl
+      nc_decls
+      mp_decls
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile =  filenames_array[pmifile]
+         assert(tempfile != char_undef)
+
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        pmi_version,len(pmi_version),nc_stat)
+
+         pm_ncread(fileid)
+      
+         call ncclose(fileid,nc_stat)
+      end if
+         
+      pm_mpibcast
+
+      return
+      end
+
+@ Read in data from netcdf file \verb+problem.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_problem
+      implicit_none_f77
+      pr_common
+      rd_common
+      pd_common
+      ma_common
+      pm_common
+      sp_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      rd_decls
+      integer fileid
+      character *FILELEN tempfile  //local
+      pr_ncdecl
+      rd_ncdecl
+      pd_ncdecl
+      nc_decls
+      mp_decls
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile =  filenames_array[problemfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        problem_version,len(problem_version),nc_stat)
+
+         pr_ncread(fileid)
+         rd_ncread(fileid)
+         pd_ncread(fileid)
+      
+         call ncclose(fileid,nc_stat)
+      end if
+      
+      pr_mpibcast
+      rd_mpibcast
+      pd_mpibcast
+
+      return
+      end
+
+@ Read data from netcdf file \verb+tally.nc+ 
+
+@<Functions...@>=
+      subroutine nc_read_tally
+      implicit_none_f77
+      pr_common
+      tl_common                  // Common
+      rf_common
+      mp_common
+      implicit_none_f90
+      nc_decls
+      st_decls
+      tl_decls
+      mp_decls
+      @<Memory allocation interface@>
+      integer fileid             // Local
+      tl_ncdecl
+      character*FILELEN tempfile
+
+      if (mpi_master) then
+         tempfile=filenames_array[tallyfile]
+         assert(tempfile != char_undef)
+         fileid=ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'tally_version',
+     $        tally_version,len(tally_version),nc_stat)
+
+         tl_ncread(fileid)
+
+         call ncclose(fileid,nc_stat)
+      end if
+      
+      tl_mpibcast
+
+      return
+      end
+
+
+@ Read in data from netcdf file \verb+output.nc+ 
+
+@<Functions...@>=
+      subroutine nc_read_output
+      implicit_none_f77
+      pr_common                  // Common
+      so_common
+      tl_common
+      ou_common
+      rf_common
+      implicit_none_f90
+      nc_decls
+      st_decls
+      tl_decls
+      @<Memory allocation interface@>
+      integer fileid             // Local
+      ou_ncdecl
+      character*FILELEN tempfile
+
+      tempfile=filenames_array[outputfile]
+      assert(tempfile != char_undef)
+      call ncpopt(0)
+      fileid=ncopen(tempfile,NC_NOWRITE,nc_stat)
+      if (nc_stat != 0) then
+         output_old_file=FALSE
+         return
+      else
+         output_old_file=TRUE
+      end if
+      call ncpopt(NC_VERBOSE+NC_FATAL)
+
+      ou_ncread(fileid)
+
+      call ncclose(fileid,nc_stat)
+
+      return
+      end
+
+@ Read in CRAMD data into problem / reactiondata commons, if needed.
+
+@<Functions...@>=
+      subroutine read_cramd_data
+      implicit_none_f77
+      pr_common
+      rd_common
+      rf_common
+      mp_common
+      implicit_none_f90
+
+      rd_decls
+      mp_decls
+      integer pr_reac
+      logical have_cramd_data
+      character*FILELEN tempfile
+
+
+      have_cramd_data=.false.
+      do pr_reac=1,pr_reaction_num
+         if (reaction_rate_eval_name[pr_reac] == 'cramd')
+     $        have_cramd_data=.true.
+      end do
+      if (!have_cramd_data) return
+
+      tempfile=filenames_array[problemfile]
+      assert(tempfile != char_undef)
+      filenames_array[problemfile]=filenames_array[cramdproblemfile]
+      call nc_read_problem
+      filenames_array[problemfile]=tempfile
+
+      return
+      end
+
+@ Write out data into netcdf file \verb+elements.nc+
+      
+@<Functions...@>=
+      subroutine nc_write_problem
+      implicit_none_f77
+      pr_common                 // Common
+      rd_common
+      pd_common
+      sp_common
+      ma_common
+      pm_common
+      rf_common
+      implicit_none_f90
+      rd_decls
+      nc_decls                 // Local
+      integer fileid
+      pr_ncdecl
+      rd_ncdecl
+      pd_ncdecl
+      st_decls
+      character*LINELEN description,program_version
+      character*FILELEN tempfile     //local
+
+      program_version=
+     $     'DEGAS 2 Git commit: $Format:%H$, ref names: $Format:%d$'
+
+      tempfile = filenames_array[problemfile]
+      assert(tempfile != char_undef)
+      fileid = nccreate(tempfile,NC_CLOBBER,nc_stat)
+
+      description = 'Data for problem in degas 2'
+      call ncattputc(fileid,NC_GLOBAL,'description',NC_CHAR,
+     $     string_length(description),
+     $     description,nc_stat)
+
+      call ncattputc(fileid,NC_GLOBAL,'data_version',NC_CHAR,
+     $     string_length(problem_version),
+     $     problem_version,nc_stat)
+      
+      call ncattputc(fileid,NC_GLOBAL,'program_version',NC_CHAR,
+     $     string_length(program_version),
+     $     program_version,nc_stat)
+      
+      pr_ncdef(fileid)
+      rd_ncdef(fileid)
+      pd_ncdef(fileid)
+      call ncendef(fileid,nc_stat)
+      pr_ncwrite(fileid)
+      rd_ncwrite(fileid)
+      pd_ncwrite(fileid)
+      
+      call ncclose(fileid,nc_stat)
+      
+      return
+      end
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

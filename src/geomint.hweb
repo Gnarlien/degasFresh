@@ -1,0 +1,213 @@
+@* Header macros for the geometry routines.
+
+% $Id: 6be18cb884b45d8a2dd1e1a56ace580faf31409e $
+\ID{$Id: 6be18cb884b45d8a2dd1e1a56ace580faf31409e $}
+
+@ Define the dimensions and variables used by the geometry routines.
+Note that |transform_ind| is defined to run from 0.
+However the 0 index isn't really used.  They are defined this way to
+accomodate netcdf's wish to say that a zero length dimension is
+unlimited.
+
+
+@a
+      package_init(gi)
+      define_var_pk(gi,ncells,INT)
+      define_var_pk(gi,nsurfaces,INT)
+      define_var_pk(gi,nboundaries,INT)
+      define_var_pk(gi,nneighbors,INT)
+      define_var_pk(gi,ntransforms,INT)
+      define_var_pk(gi,geometry_symmetry,INT)
+      define_dimen_pk(gi,cell_info_ind,c_start,c_zone)
+      define_dimen_pk(gi,cell_ind,0,ncells)
+      define_dimen_pk(gi,surface_ind,nsurfaces)
+      define_dimen_pk(gi,boundary_ind,nboundaries)
+      define_dimen_pk(gi,neighbor_ind,0,nneighbors)
+      define_dimen_pk(gi,neg_pos,s_neg,s_pos)
+      define_dimen_pk(gi,surface_info_ind,s_start,s_count)
+      define_dimen_pk(gi,surface_tx_ind,t_surf,t_mx)
+      define_dimen_pk(gi,tx_ind_1,3)
+      define_dimen_pk(gi,tx_ind_2,4)
+      define_dimen_pk(gi,transform_ind,0,ntransforms)
+      define_dimen_pk(gi,coeff_ind,NCOEFFS)
+@#if 0
+      define_dimen_pk(gi,givector,3)
+@#endif
+      define_var_pk(gi,universal_cell_min,FLOAT,vector)
+      define_var_pk(gi,universal_cell_max,FLOAT,vector)
+      define_var_pk(gi,universal_cell_vol,FLOAT)        // Here
+
+      define_varp_pk(gi,cells,INT,cell_info_ind,cell_ind)   // From here to...
+      define_varp_pk(gi,surfaces,INT,neg_pos,surface_info_ind,surface_ind)
+      define_varp_pk(gi,surfaces_tx_ind,INT,neg_pos,surface_tx_ind,surface_ind)
+      define_varp_pk(gi,surfaces_tx_mx,FLOAT,tx_ind_1,tx_ind_2,transform_ind)
+      define_varp_pk(gi,surface_sectors,INT,neg_pos,surface_info_ind,surface_ind)
+      define_varp_pk(gi,boundaries,INT,boundary_ind)
+      define_varp_pk(gi,neighbors,INT,neighbor_ind)
+      define_varp_pk(gi,surface_coeffs,FLOAT,coeff_ind,surface_ind)
+      define_varp_pk(gi,surface_points,FLOAT,vector,neg_pos,surface_ind)
+      package_end(gi)
+
+@ Declaration of the geometry routines.
+
+@f gi_ext integer
+@m gi_ext
+      external define_surface,define_surface_a,start_cell,polygon_volume,define_sector,lookup_surface;
+      integer define_surface,define_surface_a,start_cell,define_sector,lookup_surface;
+      real polygon_volume;
+
+@ Indices into the surface coefficient array.
+
+The expression for the $k$th surface is
+$$ f_k(x,y,x) = c_0+c_{x} x+c_{y} y+c_{z} z+c_{xx} x^2+c_{yy} y^2+c_{zz} z^2
+   +c_{xy} x y+c_{yz} y z+c_{xz} x z =0$$
+where the $c$'s are coefficients given by |coeff|.
+
+@m NCOEFFS 10
+@m c0 1
+@m cx 2
+@m cy 3
+@m cz 4
+@m cxx 5
+@m cyy 6
+@m czz 7
+@m cxy 8
+@m cyz 9
+@m cxz 10
+
+@ Indices into |cells| and |surface|.
+
+@m c_start 1                    // Indices in |cells|
+@m c_faces 2
+@m c_surfaces 3
+@m c_zone 4
+
+@m s_neg 0                  // Indices into |surfaces|
+@m s_pos 1
+@m s_start 0
+@m s_count 1
+@m s_sign(k) (sign(1,k)+1)/2
+
+@m t_surf 0                     // Indices into |surface_tx_ind|
+@m t_mx 1
+
+@ A possible macro invocation of |surface_eval|.  Possible
+specialization to plance surfaces.
+
+@m SURFACE_EVAL_MACRO 0
+@m PLANE_SURFACES 0
+
+@#if SURFACE_EVAL_MACRO
+
+@m surface_eval_a(x1,x2) surface_eval_b(x1,x2)
+
+@#if PLANE_SURFACES
+@m surface_eval_b(coeff,sigma,x) (sigma*(x[3]*coeff[cz]+x[2]*coeff[cy]+x[1]*coeff[cx]+coeff[c0]))
+@#else
+@m surface_eval_b(coeff,sigma,x) (sigma*(x[3]*(coeff[czz]*x[3]+coeff[cyz]*x[2]+coeff[cxz]*x[1]+coeff[cz])+x[2]*(coeff[cyy]*x[2]+coeff[cxy]*x[1]+coeff[cy])+x[1]*(coeff[cxx]*x[1]+coeff[cx])+coeff[c0]))
+@#endif
+
+@#else
+
+@m surface_eval_a surface_eval
+
+@#endif
+
+
+@ Passing information about surfaces.
+
+@m surface_info(k) surface_coeffs[1,abs(k)],sign(1,k) // Information on the $k$th surface
+@m surface_info_a(k) surface_coeffs[abs(k)],sign(1,k) // As above, but suitable as a macro (instead of function) arg
+@m surface_args coeff,sigma     // Same thing as dummy arguments
+@f decl_surface_args integer
+@m decl_surface_args real coeff[NCOEFFS];
+      integer sigma @;
+
+@ Passing information about cells. NOTE: the \verb+[1,1]+ subscript was 
+added to |surface_coeffs| to encourage the Lahey / Fujitsu compiler to 
+pass the array by reference rather than be copying. May be able to
+remove this eventually.
+
+@m cell_info(j) cells[c_faces,j],cells[c_surfaces,j],nsurfaces,boundaries[cells[c_start,j]],surface_coeffs[1,1] // All the informaion on the $j$th cell
+@m cell_args nface,nsurface,nsurfaces,surf_list,surface_coeffs // as dummy arguments
+@f decl_cell_args integer
+@m decl_cell_args integer nface,nsurface,nsurfaces,surf_list[nsurface];
+      real surface_coeffs[NCOEFFS,nsurfaces] @;
+
+@ Some macros to simplify processing of faces in functions which deal with
+faces.
+
+@m cell_surface_info(n) surface_info(surf_list[n])
+
+@#if SURFACE_EVAL_MACRO
+@m cell_surface_info_a(n) surface_info_a(surf_list[n])
+@#else
+@m cell_surface_info_a(n) cell_surface_info(n)
+@#endif
+
+@f dofaces do
+@m dofaces(n) do n=1,nface
+@f docuts do
+@m docuts(n) do n=nface+1,nsurface
+@f dosurfaces do
+@m dosurfaces(n) do n=1,nsurface
+@m first_face(i) cells[i]
+@m last_face(i) (cells[(i)+1]-1)
+
+@ Definitions of the tracking types.
+
+@m TRACK_BASIC 0           // Tracking in straight lines no transformations
+@m TRACK_NEUTRAL 1    // Observe transformations
+@m TRACK_ODE 2        // Track according to an ODE
+
+@ Definitions of symmetries for some types of elements.
+
+@m geometry_symmetry_none 0
+@m geometry_symmetry_plane 1 // $y$ coordinate is ignored.
+@m geometry_symmetry_cylindrical 2 // $\phi$ coordinate is ignored.
+@m geometry_symmetry_oned 3 // $y$ and $z$ coordinates are ignored.
+@m geometry_symmetry_plane_hw 4 // hardware does not vary in $y$.
+@m geometry_symmetry_cyl_hw 5   // ditto.
+@m geometry_symmetry_cyl_section 6  // angular slice of a cylinder.
+
+@ NETCDF read/write of geometry.
+
+@m netcdf_geometry_decls
+      gi_ncdecl @;
+
+@m netcdf_write_geometry(fileid)
+      gi_ncdef(fileid);
+      call ncendef(fileid,nc_stat);
+      gi_ncwrite(fileid) @;
+      
+@ Define PVM transmission routines
+
+@m pvm_geometry_put
+      pvm_put(ncells);
+      pvm_put(nsurfaces);
+      pvm_put(nboundaries);
+      pvm_put(nneighbors);
+      pvm_put(ntransforms);
+      pvm_put(cells);
+      pvm_put(surfaces);
+      pvm_put(boundaries);
+      pvm_put(neighbors);
+      pvm_put(surface_coeffs)@;
+
+@m pvm_geometry_get
+      pvm_get(ncells);
+      pvm_get(nsurfaces);
+      pvm_get(nboundaries);
+      pvm_get(nneighbors);
+      pvm_get(ntransforms);
+      var_alloc(cells);
+      var_alloc(surfaces);
+      var_alloc(boundaries);
+      var_alloc(neighbors);
+      var_alloc(surface_coeffs);
+      pvm_get(cells);
+      pvm_get(surfaces);
+      pvm_get(boundaries);
+      pvm_get(neighbors);
+      pvm_get(surface_coeffs)@;
+

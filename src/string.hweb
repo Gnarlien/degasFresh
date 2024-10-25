@@ -1,0 +1,22 @@
+@* String definitions.
+
+% $Id: f0e83637473f1fb5d226413f880dc504b276b8aa $
+
+\ID{$Id: f0e83637473f1fb5d226413f880dc504b276b8aa $}
+
+Declarations of the string routines.
+
+@f st_decls integer
+@m st_decls
+      external string_length,read_string,parse_string,next_token,string_lookup,int_lookup,read_real,read_integer,read_int_soft_fail,read_real_soft_fail,read_real_scaled;
+      integer string_length,parse_string,string_lookup,int_lookup,read_integer,read_int_soft_fail;
+      real read_real,read_real_soft_fail,read_real_scaled;
+      logical read_string,next_token @;
+
+@ A string without its trailing blanks
+
+@m SP $UNQUOTE(' ')
+@m trim(s) s SP (1:string_length(s))
+
+@ Read text from a string (does nothing)
+@m read_text(x) x

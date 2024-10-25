@@ -1,0 +1,584 @@
+% $Id: 54a4ec2da0ad56f6d314efd570158bebc8fec193 $
+\Title{flight}
+
+
+@* Routines to follow flights.
+
+\ID{$Id: 54a4ec2da0ad56f6d314efd570158bebc8fec193 $}
+
+@m FILE 'flight.web'
+
+@m EIR_REC_BENCH 0
+@m DUMP_FLIGHTS 0
+@m MPI_slave_messages 0
+
+@m WMIN const(1.,-3)
+@m WMIN_PMI const(1.,4)
+
+@I macros.hweb
+@I zone.hweb
+@I sysdep.hweb
+@I particle.hweb
+@I flight.hweb
+@I random.hweb
+@I background.hweb
+@I species.hweb
+@I string.hweb
+@I problem.hweb
+@I location.hweb
+@I reaction.hweb
+@I sector.hweb
+@I pmiformat.hweb
+@I pmidata.hweb
+@I sources.hweb
+@I tally.hweb
+@I output.hweb
+@I stat.hweb
+@I materials.hweb
+@I snapshot_pdf.hweb
+@I flight_frag.hweb
+
+@ The main program.
+
+@a
+      @<Functions and subroutines@>
+
+@ Follow a bunch of flights.
+
+@<Functions...@>=
+      subroutine do_flights(estimator_factors)
+      implicit_none_f77
+      zn_common
+      pr_common
+      tl_common
+      sa_common
+      ff_common
+      sn_common
+      sp_common
+      implicit_none_f90
+
+      integer nstart,nflights            // Input
+      rn_seed_decl(seed0)
+      so_decl(isource)
+      real estimator_factors[*]          // Scratch
+      integer i,j,new_dim                // Local 
+      real mult
+      rn_seed_decl(seed)
+      fl_decl(fx)
+
+      ff_decls
+      tl_decls
+      lc_decls
+      @<Memory allocation interface@>
+
+/*
+   This used to be taken care of in |stat_wt_balance|. Added the check
+   on weight to permit re-entry in the MPI case.
+*/
+      if (stat_comp_frag == FALSE && stat_wt_tot_frag == zero) then
+         do i=0,stat_wt_dim_frag-1
+            stat_wt_frag[i]=zero
+         end do
+      end if
+
+      do j=1,ff_number_particles
+/*
+   Use macro to load particle number |j| into flight object
+   |x| from the |flight_frag| arrays, available here via
+   common block.  The flight''s relative weight is brought 
+   along and placed in |stat_wt_tot_flt|.
+*/
+         ff_label_init(j,fx,stat_wt_tot_flt)
+         assert(fl_check(fx))
+
+         call follow(fl_args(fx),estimator_factors)
+
+         if (min(stat_size_frag+stat_size_flt,tally_size)>stat_dim_frag
+     $        && stat_comp_frag == TRUE) then
+            mult=max(one,areal(stat_size_flt)/areal(stat_mem_inc_frag))
+            new_dim=min(stat_dim_frag+int(mult*stat_mem_inc_frag),tally_size)
+            var_realloc(stat_frag,stat_dim_frag-1,new_dim-1)
+            var_realloc(stat_ptr2full_frag,stat_pf_dim_frag-1,new_dim-1)
+            var_realloc(stat_wt_frag,stat_wt_dim_frag-1,new_dim-1)
+            stat_dim_frag=new_dim
+            stat_pf_dim_frag=new_dim
+            stat_wt_dim_frag=new_dim
+         end if
+/* 
+   Temporary diagnostic output.
+*/
+         if (!(stat_wt_tot_flt >= zero)) then
+            write(stderr,*) ' Bad value of stat_wt_tot_flt = ',stat_wt_tot_flt
+            write(stderr,*) ' Source = ',fl_source(fx)
+            write(stderr,*) ' Number = ',fl_number(fx)
+            write(stderr,*) ' Size = ',stat_size_flt
+            call flush(stderr)
+            assert(stat_wt_tot_flt >= zero)
+         end if
+/*
+   End of temporary output.
+*/
+         call stat_acc(stat_comp_flt,stat_wt_tot_flt,stat_size_flt,
+     $         stat_dim_flt,stat_flt,stat_pf_dim_flt,stat_ptr2full_flt,
+     $         stat_ps_dim_flt,stat_ptr2short_flt,
+     $         stat_comp_frag,stat_wt_tot_frag,stat_size_frag,stat_dim_frag,
+     $         stat_frag,stat_pf_dim_frag,stat_ptr2full_frag,
+     $         stat_ps_dim_frag,stat_ptr2short_frag,stat_wt_dim_frag,
+     $         stat_wt_frag)
+
+         call next_seed(1,seed)
+      end do
+
+      return
+      end
+      
+@ Follow a single particle.
+
+@<Functions...@>=
+      subroutine follow(fl_dummy(x),estimator_factors)
+      implicit_none_f77
+      bk_common
+      sp_common
+      zn_common
+      pr_common
+      so_common
+      rc_common
+      tl_common
+      implicit_none_f90
+      pt_decls
+      fl_decl(x)
+      integer i,nprod,jtemp
+      real t,tmax,ionize_rate,rnd,other_rate,
+     $     rate[pr_reaction_max],rate_all[pr_reaction_max],sum,t_fac
+      real estimator_factors[*]         // Scratch
+      logical done
+@#if DUMP_FLIGHTS
+      character*1 grp_label
+@#endif
+
+      pt_decl(prod[0:rc_product_max])
+      rn_decls
+      st_decls
+      lc_decls
+      tl_decls
+      external find_rate
+      real find_rate
+      
+@#if MPI_slave_messages
+      write(diskout+3,*) ' Start of flight ',fl_number(x)
+@#endif
+@#if DUMP_FLIGHTS
+      if (fl_number(x) == 0) then
+         write(grp_label,'(i1)') fl_source(x)
+         open(unit=diskout,file='flights'\/grp_label,status='unknown')
+      end if
+@#endif
+      call score_sources(tl_est_collision,fl_args(x),estimator_factors)
+
+      if (!((zn_type(lc_zone(pt_loc(fl_current(x)))) == zn_plasma)
+     $     || (zn_type(lc_zone(pt_loc(fl_current(x)))) == zn_vacuum))) then
+         write(stdout,*) fl_source(x),fl_number(x)
+         write(stdout,*) lc_x(pt_loc(fl_current(x)))[1],
+     $   lc_x(pt_loc(fl_current(x)))[2],lc_x(pt_loc(fl_current(x)))[3]
+         assert(' Bad flight origin' == ' ')
+      end if
+
+loop1: continue                 // Start a new 
+
+ /* The computation of the ionization rate and any other rate that
+ does not depend on the neutral energy could go here. */
+
+loop: continue                  // Still in same zone
+@#if DUMP_FLIGHTS
+      write(diskout,'(1p,5(e13.4,2x))') pt_t(fl_current(x)),
+     $   lc_x(pt_loc(fl_current(x)))[1],
+     $   lc_x(pt_loc(fl_current(x)))[2],lc_x(pt_loc(fl_current(x)))[3],
+     $   pt_w(fl_current(x))
+@#endif
+
+      ionize_rate=zero
+      other_rate=zero
+      do i=1,pr_rc_num(pt_test(fl_current(x)))  
+         rate[i]=zero                       
+         rate_all[i]=zero
+      end do
+      if (zn_type(lc_zone(pt_loc(fl_current(x)))) == zn_plasma 
+     $     && pr_rc_num(pt_test(fl_current(x))) > 0) then
+         do i=1,pr_rc_num(pt_test(fl_current(x)))
+            rate[i]=find_rate(pt_args(fl_current(x)),pr_background_args(pr_ts_bk(pt_test(fl_current(x)),i)),pr_reaction_args(pr_ts_rc(pt_test(fl_current(x)),i)),rn_args(fl_rand(x)))
+            rate_all[i]=rate[i]
+            if (rc_reaction_type(pr_reaction(pr_ts_rc(pt_test(fl_current(x)),i)))=='ionize_suppress') then
+               ionize_rate=ionize_rate+rate[i]
+               rate[i]=zero
+            else
+               other_rate=other_rate+rate[i]
+            end if
+         end do
+      end if         
+
+      if (zn_type(lc_zone(pt_loc(fl_current(x)))) == zn_plasma 
+     $     && other_rate > zero) then
+         tmax=-log(random(rn_args(fl_rand(x))))/other_rate
+      else
+         tmax=geom_infinity
+      end if  
+      if (so_time_dependent == TRUE) 
+     $     tmax=min(tmax,so_time_final-pt_t(fl_current(x)))
+
+      if (pt_w(fl_current(x)) < WMIN) then  
+         if (random(rn_args(fl_rand(x))) > half) then
+            fl_pointer(x)--
+            if (fl_pointer(x) <= 0) goto break
+            assert(fl_check(x))
+            goto loop1
+         else
+            pt_w(fl_current(x)) = two*pt_w(fl_current(x))
+         end if
+      else if ((so_time_dependent == TRUE)
+     $        && (pt_t(fl_current(x)) >= (so_time_final-epsilon))) then
+         fl_pointer(x)--
+         if (fl_pointer(x) <= 0) goto break
+         assert(fl_check(x))
+         goto loop1
+      end if
+
+      done=pt_track(tmax,t,fl_current(x))
+/*
+   The use of the additional expansion term here makes the code more
+   robust to precision differences across platforms.
+*/
+      if (ionize_rate*t > sqrt(epsilon)) then
+         t_fac=(one-exp(-ionize_rate*t))/ionize_rate
+      else if (ionize_rate > epsilon) then
+         t_fac=t*(one-half*ionize_rate*t)
+      else
+         t_fac=t
+      end if   
+      call score_test(tl_est_track,t_fac,pt_args(fl_current(x)),estimator_factors)
+
+      pt_copy(fl_current(x),prod[0])
+      if (pr_rc_num(pt_test(fl_current(x))) > 0) then
+         do i=1,pr_rc_num(pt_test(fl_current(x)))
+            call score_reaction(tl_est_track,t_fac,
+     $           pr_reaction_args(i),rate_all[i],
+     $           nprod,pt_args(prod[0]),estimator_factors,
+     $           rn_args(fl_rand(x)))
+            assert(nprod == 0)
+         end do
+      end if
+
+      pt_w(fl_current(x))=exp(-ionize_rate*t)*pt_w(fl_current(x))
+      
+      if (done) then       
+         if ((so_time_dependent == TRUE)
+     $  && (pt_t(fl_current(x)) >= (so_time_final-epsilon))) then       // Time boundary
+/*
+   Score the snapshot estimators at the time boundary.  Note that effectively, 
+   the scoring functions include a delta-function in time.  Consequently, this
+   |t_fac| is included to cancel the overall factor in subroutine |do_flights_master|.
+*/
+            t_fac=so_time_final-so_time_initial
+            call score_test(tl_est_snapshot,t_fac,pt_args(fl_current(x)),estimator_factors)
+/*
+   In the time dependent initialization mode, we basically just reset
+   the flight time and let it keep going until it is ionized or leaves
+   the system.
+*/
+            if (so_time_initialization == TRUE) pt_t(fl_current(x))=so_time_initial
+         else                                                           // Have a collision
+            assert(zn_type(lc_zone(pt_loc(fl_current(x)))) == zn_plasma)
+            rn_next(rnd,fl_rand(x))
+            rnd=rnd*other_rate
+            sum=zero
+            assert(pr_rc_num(pt_test(fl_current(x))) > 0)
+            do i=1,pr_rc_num(pt_test(fl_current(x)))
+               sum=sum+rate[i]
+               if (sum >= rnd) then
+                  assert(rate[i] > zero)
+                  call score_test(tl_est_collision,one/other_rate,
+     $                 pt_args(fl_current(x)),
+     $                 estimator_factors)
+
+                  pt_copy(fl_current(x),prod[0])
+                  call score_reaction(tl_est_collision,  // {\em And process !}
+     $                 one/rate[i],pr_reaction_args(i),rate[i],
+     $                 nprod,pt_args(prod[0]),estimator_factors,
+     $                 rn_args(fl_rand(x)))
+                  goto break1
+               end if
+            end do
+            assert(.false.)
+break1:     continue
+            fl_pointer(x)--
+            if (nprod > 0) then
+               do i=1,nprod
+                  if (pt_test(prod[i]) > 0 && pt_w(prod[i]) > zero) then
+                     fl_pointer(x)++
+                     pt_copy(prod[i],fl_current(x))
+                  end if
+               end do
+            end if
+            if (fl_pointer(x) <= 0) goto break
+            assert(fl_check(x))
+         end if
+         goto loop
+      else               
+/* 
+   Go to next zone or process a sector.
+   Universal cell crossings should have been handled by a transformation or
+   an explicit exit. 
+*/
+         if (lc_cell_next(pt_loc(fl_current(x))) == 0) then
+            assert("Leaving universal cell" == " ")
+         else if (lc_sector(pt_loc(fl_current(x))) != 0 
+     $           || lc_sector_next(pt_loc(fl_current(x))) != 0) then
+            call score_sector(fl_args(x),estimator_factors)
+            if (fl_pointer(x) <= 0) goto break
+            assert(fl_check(x))
+         else
+            pt_thru_face(fl_current(x))
+         end if
+         goto loop1
+      end if
+
+break: continue     // End of flight!
+@#if DUMP_FLIGHTS
+      write(diskout,*) '------------------------------------'   // Delimiter
+@#if !MPI
+/*
+   Slaves no longer have access to source group data.  Suspect
+   that |DUMP_FLIGHTS| unlikely to be used with MPI, anyway.
+*/
+      if (fl_number(x) == so_nflights(fl_source(x))-1) close(unit=diskout)
+@#endif
+@#endif
+@#if MPI_slave_messages
+      write(diskout+3,*) ' End of flight ',fl_number(x)
+@#endif
+
+      return
+      end
+
+@ Carry out sector-related tasks. Principally, this includes processing
+plasma-material interactions and scoring at ``diagnostic'' surfaces.
+
+@<Functions...@>=
+      subroutine score_sector(fl_dummy(x),estimator_factors)
+
+      implicit_none_f77
+      sc_common                                               // Common
+      implicit_none_f90
+
+      fl_decl(x)                                              // Input / Output
+      real estimator_factors[*]                               // Scratch
+
+      integer type,type_ptr_1,type_ptr_2,type_ptr,nprod,i     // Local
+      real mat_temp,mat_recyc_coef
+      pt_decl(prod[0:pm_product_max])
+      sc_decl(sector1)
+      sc_decl(sector2)
+      ma_decl(mat_ref)
+      lc_decls
+      
+      sector1=lc_sector(pt_loc(fl_current(x)))
+      sector2=lc_sector_next(pt_loc(fl_current(x)))
+/*
+  The PMI and |score_diagnostics| routines will operate on the current
+  flight through the |prod[0]| particle. PMI products will be assigned from
+  |prod[1]|, etc. In these cases, |fl_current(x)| is no longer needed
+  after this point and is killed explicitly below with the decrementing
+  of |fl_pointer|. If |sector1| and |sector2| involve purely diagnostics 
+  sectors, however, |fl_current(x)| remains valid. Since |prod[0]| is
+  used for scoring, we can take it through the face here without causing
+  problems in the loop over |nprod| later.
+*/
+      nprod=0
+      pt_copy(fl_current(x),prod[0])
+      pt_thru_face(fl_current(x))  
+/*
+   This loop over non-diagnostic sectors will handle PMI's and exits.
+*/
+      do type=1,sc_diagnostic(0)       
+         type_ptr_1=sector_type_pointer[sector1][type]
+         type_ptr_2=sector_type_pointer[sector2][type]
+         if (type_ptr_1 != int_unused && type_ptr_1 != int_undef) then
+/*
+   If both sectors are of this type, just process the first one.
+*/
+            type_ptr=type_ptr_1   
+         else if (type_ptr_2 != int_unused && type_ptr_2 != int_undef) then
+            assert(type_ptr_1 == int_unused || type_ptr_1 == int_undef)
+            type_ptr=type_ptr_2
+         else
+            type_ptr=0
+         end if
+
+         if (type_ptr != 0) then
+            assert(nprod == 0)
+            if (type == sc_exit) then
+               assert(sc_exit_check(type_ptr))
+               fl_pointer(x)--
+            else if (type == sc_wall) then
+               assert(sc_wall_check(type_ptr))
+               mat_ref=wall_material[type_ptr]
+               mat_temp=wall_temperature[type_ptr]
+               mat_recyc_coef=wall_recyc_coef[type_ptr]
+               call process_pmi(mat_ref,mat_temp,mat_recyc_coef,
+     $              nprod,pt_args(prod[0]),rn_args(fl_rand(x)))
+               fl_pointer(x)--
+            else if (type == sc_target) then
+               assert(sc_target_check(type_ptr))
+               mat_ref=target_material[type_ptr]
+               mat_temp=target_temperature[type_ptr]
+               mat_recyc_coef=target_recyc_coef[type_ptr]
+               call process_pmi(mat_ref,mat_temp,mat_recyc_coef,
+     $              nprod,pt_args(prod[0]),rn_args(fl_rand(x)))
+               fl_pointer(x)--
+            else if (type == sc_plasma) then
+               assert(sc_plasma_check(type_ptr))
+            end if
+         end if
+      end do
+/*
+   Score diagnostic sectors, including those without an associated
+   PMI (|nprod| = 0). Copy test-products onto current stack.
+*/
+      call score_diagnostics(nprod,pt_args(prod[0]),estimator_factors)
+      if (nprod > 0) then
+         do i=1,nprod
+            if (pt_test(prod[i]) > 0 && pt_w(prod[i]) > zero) then
+/*
+   This undoes the location swap performed in |pick_pmi| for 
+   scoring purposes.
+*/
+               pt_thru_face(prod[i])
+               assert(lc_check(pt_loc(prod[i])))
+               fl_pointer(x)++
+               pt_copy(prod[i],fl_current(x))
+            end if
+         end do
+      end if
+
+      return
+      end
+
+@ Select and execute a plasma-material interaction.
+
+@<Functions...@>=
+      subroutine process_pmi(mat_ref,mat_temp,mat_recyc_coef,
+     $           nprod,pt_dummy(prod),rn_dummy(x))
+
+      implicit_none_f77
+      pr_common
+      sp_common
+      pm_common
+      implicit_none_f90
+
+      ma_decl(mat_ref)                     // Input
+      real mat_temp,mat_recyc_coef
+      integer nprod
+      pt_decl(prod[0:pm_product_max])      // Output
+      rn_decl(x)                           // Input/output
+
+      integer i,imin                       // Local
+      real yield[0:pr_pmi_max],independent_parameters[pf_max_indep_params]
+      real cos_angle,sum,rnd,sum_refl
+
+      pr_pmi_decl(ts_pmi)
+      pr_pmi_decl(default_pmi)
+
+      external find_yield,intersection_direction
+      real find_yield,intersection_direction
+      rn_decls
+
+      assert(mat_ref != 0)
+               
+      do i=1,pf_max_indep_params
+         independent_parameters[i]=zero
+      end do
+      
+      independent_parameters[pf_var_energy_in]=
+     $     half*sp_m(pr_test(pt_test(prod[0])))
+     $     *vc_abs2(pt_v(prod[0]))
+      independent_parameters[pf_var_vel_1_in]=pt_v(prod[0])[1]
+      independent_parameters[pf_var_vel_2_in]=pt_v(prod[0])[2]
+      independent_parameters[pf_var_vel_3_in]=pt_v(prod[0])[3]
+      cos_angle=intersection_direction(lc_face(pt_loc(prod[0])),
+     $     lc_x(pt_loc(prod[0]))[1],pt_v(prod[0])[1])
+      independent_parameters[pf_var_cos_polar_angle_in]=cos_angle
+      independent_parameters[pf_var_polar_angle_in]=acos(cos_angle)
+      independent_parameters[pf_var_t_wall]=mat_temp
+               
+      assert(mat_recyc_coef >= zero)
+      assert(mat_recyc_coef <= one)
+      yield[0]=one-mat_recyc_coef // This is the absorbed fraction
+      sum=yield[0]
+      sum_refl=zero
+      default_pmi=0
+      assert(pr_pm_case_num(pt_test(prod[0])) > 0)
+      do ts_pmi=1,pr_pm_case_num(pt_test(prod[0]))
+         if (pm_materials(pr_pm_ref(pr_pm_cases(pt_test(prod[0]),ts_pmi))) == mat_ref) then
+            yield[ts_pmi]=find_yield(pt_args(prod[0]),
+     $           pr_pmi_args(ts_pmi),independent_parameters,
+     $           rn_args(x))
+@#if EIR_REC_BENCH
+// Duplicate EIRENE behavior of setting yield = 0 for incident energies < 1 eV.
+            if (pr_pm_ref(pr_pm_cases(pt_test(prod[0]),ts_pmi)) == 8 && independent_parameters[pf_var_energy_in] <= electron_charge) yield[ts_pmi]=zero
+@#endif
+            if (yield[ts_pmi] < zero) then
+               default_pmi=ts_pmi
+               yield[ts_pmi]=zero
+            end if
+         else
+            yield[ts_pmi]=zero
+         end if
+         sum+=yield[ts_pmi]
+         sum_refl+=yield[ts_pmi] // W/o default or absorption.
+      end do
+
+      if (default_pmi > 0 && sum < one) yield[default_pmi]=one-sum
+
+         rn_next(rnd,x)
+/*
+   With |WMIN_PMI| $< 1$ (e.g., 1.e-4), this code will carry out suppressed
+   absorption similar to that used in EIRENE. If |WMIN_PMI| $> 1$, the code
+   will effectively be the same as the original code.
+*/
+      sum=zero
+/*
+   First option skips suppressed absorption for cases with small
+   weight or in which reduction factor would lead to zero or
+   negative weight.
+*/
+      if (pt_w(prod[0]) < WMIN_PMI || (sum_refl+yield[0] >= one)) then 
+	imin=0
+      else	
+        imin=1
+      end if
+      do i=imin,pr_pm_case_num(pt_test(prod[0]))  
+         sum=sum+yield[i]
+         if (sum >= rnd) then
+            ts_pmi=i
+            goto break1
+         end if
+      end do
+      ts_pmi=default_pmi
+      assert(sum < one)     // This should apply only for |imin| = 1 case
+break1:     continue
+      if (ts_pmi > 0) then      // 
+         call pick_pmi(pr_pmi_args(ts_pmi),independent_parameters,
+     $        nprod,pt_args(prod[0]),rn_args(x))
+         if (ts_pmi == default_pmi && yield[0] > zero && imin == 1) then
+            do i=1,nprod
+               pt_w(prod[i])*=one-yield[0]/(one-sum_refl)
+               assert(pt_w(prod[i]) > const(1.,-1)*WMIN_PMI)
+            end do
+         end if
+      else                 // Absorption below min. weight
+         assert(yield[0] > zero)      // Be sure absorption is nonzero.
+         nprod=0
+      end if
+
+      return
+      end
+

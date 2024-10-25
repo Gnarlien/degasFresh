@@ -1,0 +1,614 @@
+% $Id: 403681d5c3f813096ec48aaafa5aed0909ea4c38 $
+\Title{adaswrite}
+
+@* Read data from ADAS adf11 formatted files.
+
+\ID{$Id: 403681d5c3f813096ec48aaafa5aed0909ea4c38 $}
+
+Reads in all ADAS files for an ion species and writes the data in
+them to the associated netCDF files.  The same data are written to
+a text file to simplify testing.
+
+The input file specifies the ADAS file names (and paths) explicitly
+so that the user can control the ``years'' used for each.  This is 
+followed by a list of the DEGAS 2 reaction symbols (from the 
+|reaction_infile|).  Take this as input, rather than doing an automated
+search, in case there are multiple versions (''years'') of a particular
+process.
+
+@m FILE 'adaswrite.web'
+
+@I macros.hweb
+@I readfilenames.hweb
+@I reaction.hweb
+@I species.hweb
+@I sysdep.hweb
+@I string.hweb
+@I xsection.hweb
+@I netcdf.hweb
+
+@ The unnamed module.
+
+@a
+      program adaswrite
+      implicit_none_f77
+      implicit_none_f90
+
+      integer nargs
+      character*FILELEN inputfile
+
+      sy_decls
+
+      nargs=arg_count()
+      if (nargs != 1) then
+         assert(' Command line must specify an input file' == ' ')
+      end if
+      call command_arg(1,inputfile)
+
+      call readfilenames
+      call nc_read_elements
+      call nc_read_species
+      call nc_read_reactions
+
+      call adas_write(inputfile)
+
+      stop
+      end
+      
+      @<Functions and subroutines@>
+      
+@ Set up array sizes to read in data for a particular reaction.
+
+@m num_files 5 // Each ADAS data set currently consists of 5 files
+@m ecd_file 1  // Binding energy, aka ionization potential
+@m scd_file 2  // GCR ionization rate
+@m plt_file 3  // Line radiation associated with ionization
+@m acd_file 4  // GCR recombination rate
+@m prb_file 5  // Line radiation associated with recombination
+
+@m max_charge 93         // Main array maximum dimensions, values 
+@m max_densities 100     // cribbed from B2.5: |/src/utility/ratadas.F|.
+@m max_temperatures 100
+
+@m ndptnl 4              // Parameter values for ignored ADAS
+@m ndptn 128             // arrays.  Again, borrowed from B2.5.
+@m ndptnc 256
+@m ndcnct 100
+
+@m open_file(aunit,aname)    open(unit=aunit,file=aname,status='old',form='formatted',iostat=open_stat);
+         assert(open_stat == 0) @;
+@m input_done #:0
+@m reaction_loop #:0
+
+@<Functions...@>=
+      subroutine adas_write(inputfile)
+
+      define_dimen(nz_ind,nz)
+      define_dimen(nreact_ind,2*nz)
+      define_dimen(old_dens_ind,0,old_num_dens-1)
+      define_dimen(old_temp_ind,0,old_num_temp-1)
+      define_dimen(dens_ind,0,new_num_dens-1)
+      define_dimen(temp_ind,0,new_num_temp-1)
+      
+      define_varp(adas_2d,FLOAT,old_temp_ind,old_dens_ind)
+      define_varp(new_densities,FLOAT,dens_ind)
+      define_varp(new_temperatures,FLOAT,temp_ind)
+      define_varp(ionize_done,INT,nz_ind)
+      define_varp(recomb_done,INT,nz_ind)
+      
+      implicit_none_f77
+      xs_common                                         // Common
+      rc_common
+      sp_common
+      implicit_none_f90
+
+      character*FILELEN inputfile                       // Input
+
+      integer b,e,p,length,open_stat,ifile,ifile2,      // Local
+     $     ncnct,num_reactions,nz,new_num_dens,
+     $     new_num_temp,i,j,k,l,ind_dir,fileid,
+     $     reagent_charge,icharge_pot,rate_file,loss_file,
+     $     icharge,irc,old_num_dens,old_num_temp
+      integer num_densities[num_files],num_temperatures[num_files],
+     $        num_charge[num_files],file_check[num_files],
+     $     adas_class[num_files]
+      real new_dens_min,density_delta,new_temp_min,temp_delta,
+     $     new_dens_max,new_temp_max,log_fac
+/*
+   Note that we index the density and temperature arrays
+   starting at 0 to work with DEGAS 2''s interpolation machinery.
+*/
+      real adas_densities[num_files][0:max_densities-1],
+     $     adas_temperatures[num_files][0:max_temperatures-1],
+     $     adas_rates[num_files][0:max_densities-1][0:max_temperatures-1][max_charge]
+      character*FILELEN adas_filenames[num_files],fileout
+      character*LINELEN line,react_sym,root_name,description
+      character*3 adas_fileroots[num_files]
+
+      integer nptnl,iblmx,ismax,iz1min,iz1max            // Ignored ADAS variables
+      integer nptn[ndptnl],nptnc[ndptn][ndptnl],iptnla[ndptnl],
+     $        iptna[ndptn][ndptnl],iptnca[ndptnc][ndptn][ndptnl],icnctv[ndcnct],
+     $        isppr[max_charge],ispbr[max_charge],isstgr[max_charge]
+      real dnr_ams
+      logical lres,lstan,lptn
+      character*12 dnr_ele
+      real find_index                                     // External
+
+      data adas_fileroots /'ECD','SCD','PLT','ACD','PRB'/
+      data adas_class /12,2,8,1,4/
+
+      declare_varp(adas_2d)
+      declare_varp(new_densities)
+      declare_varp(new_temperatures)
+      declare_varp(ionize_done)
+      declare_varp(recomb_done)
+
+      nc_decls
+      xs_ncdecl
+      xs_decls
+      st_decls 
+      @<Memory allocation interface@>
+/*
+   Input file has two sections:
+   First section has the file names, each with a keyword: "acdfile",
+   etc. with "scdfile", "pltfile", "prbfile", and "ecdfile", each
+   with a full pathname.
+   Second section has the list of reactions.  Have to count these on
+   the fly and pass the whole thing down.
+*/
+      open_file(diskin,inputfile)
+
+      do ifile=1,num_files
+         adas_filenames[ifile]=char_undef
+         file_check[ifile]=FALSE
+      end do
+/*
+   The idea here is to insist that all |num_files| be listed here and
+   that they appear only once.  As such, can just do a simple loop
+   over the expected number of files and then test against the
+   keywords. 
+*/
+      do ifile=1,num_files
+
+         assert(read_string(diskin,line,length))
+
+         assert(length<=len(line))
+         length=parse_string(line(:length))
+         p=0
+         assert(next_token(line,b,e,p))
+         
+         if (line(b:e) == 'ecd_file') then
+            assert(next_token(line,b,e,p))
+            adas_filenames[ecd_file]=line(b:e)
+            assert(file_check[ecd_file] == FALSE)
+            file_check[ecd_file]=TRUE
+         else if (line(b:e) == 'scd_file') then
+            assert(next_token(line,b,e,p))
+            adas_filenames[scd_file]=line(b:e)
+            assert(file_check[scd_file] == FALSE)
+            file_check[scd_file]=TRUE
+         else if (line(b:e) == 'plt_file') then
+            assert(next_token(line,b,e,p))
+            adas_filenames[plt_file]=line(b:e)
+            assert(file_check[plt_file] == FALSE)
+            file_check[plt_file]=TRUE
+         else if (line(b:e) == 'acd_file') then
+            assert(next_token(line,b,e,p))
+            adas_filenames[acd_file]=line(b:e)
+            assert(file_check[acd_file] == FALSE)
+            file_check[acd_file]=TRUE
+         else if (line(b:e) == 'prb_file') then
+            assert(next_token(line,b,e,p))
+            adas_filenames[prb_file]=line(b:e)
+            assert(file_check[prb_file] == FALSE)
+            file_check[prb_file]=TRUE
+         else
+            do ifile2=1,num_files
+               if (file_check[ifile2] == FALSE) then
+                  write(stderr,*) ' Missing file of type ',
+     $                 adas_fileroots[ifile2]
+               end if
+            end do
+            assert(' One or more ADAS files are missing' == ' ')
+         end if
+      end do
+/*
+   Initially thought of inserting these calls inside the if-then
+   above.  But figured that inserting in a second loop here would be
+   neater and less error prone.
+*/
+      do ifile=1,num_files
+/*
+   Note that the ADAS routine closes the file !!
+*/
+         open_file(diskin+1,adas_filenames[ifile])
+         call xxdata_11(diskin+1,adas_class[ifile],
+     $        max_charge,max_densities,max_temperatures,
+     $        ndptnl,ndptn,ndptnc,ndcnct,
+     $        num_charge[ifile],iz1min,iz1max,
+     $        nptnl,nptn,nptnc,iptnla,iptna,iptnca,
+     $        ncnct,icnctv,iblmx,ismax,dnr_ele,dnr_ams,
+     $        isppr,ispbr,isstgr,
+     $        num_densities[ifile],num_temperatures[ifile],
+     $        adas_densities[ifile][0],adas_temperatures[ifile][0],
+     $        adas_rates[ifile][0][0][1],
+     $        lres,lstan,lptn)
+/*
+   This is true for unresolved files, which is what we are
+   assuming here.  The $+1$ is the neutral state.
+*/
+         assert(ncnct == num_charge[ifile]+1)
+/*
+   Do an idiot check to verify that the nuclear charge is the same
+   across all files.  Also check to see that all are using the
+   same density and temperature mesh.  This need not be true in
+   general but does seem to be.
+*/
+         if (ifile == 1) then
+            nz=num_charge[ifile]
+         else
+            assert(num_charge[ifile] == nz)
+            assert(num_densities[ifile] == num_densities[1])
+            assert(adas_densities[ifile][0] == adas_densities[1][0])
+            assert(adas_densities[ifile][num_densities[ifile]-1]
+     $           == adas_densities[1][num_densities[1]-1])
+            assert(num_temperatures[ifile] == num_temperatures[1])
+            assert(adas_temperatures[ifile][0] == adas_temperatures[1][0])
+            assert(adas_temperatures[ifile][num_temperatures[ifile]-1]
+     $           == adas_temperatures[1][num_temperatures[1]-1])
+            do i=1,nz
+/*
+   The value for the neutral state, the first entry in the file, is 0.
+*/
+               assert(adas_rates[ecd_file][0][0][i+1] 
+     $           == adas_rates[ecd_file][num_densities[1]-1][num_temperatures[1]-1][i+1])
+            end do
+         end if
+      end do
+/*
+   Need to interpolate onto a uniform mesh to work with the data
+   handling machinery.  Initially doing this with linear
+   interpolation (following the practice of B2.5).  To minimize
+   interpolation error, mindlessly doubling the resolution.  An
+   alternative would be to set up 2-D spline fits.  Either use
+   exactly the same range.  Note that the ADAS values are
+   base-10 logs.
+*/ 
+      log_fac=log(const(1.,1))
+      old_num_dens=num_densities[1]
+      new_num_dens=2*old_num_dens
+      var_alloc(new_densities)
+      new_dens_min=log_fac*adas_densities[1][0]
+      new_dens_max=log_fac*adas_densities[1][old_num_dens-1]
+      density_delta=(new_dens_max-new_dens_min)
+     $              /areal(new_num_dens-1)
+      do i=0,old_num_dens-1
+         adas_densities[1][i]=log_fac*adas_densities[1][i]
+      end do
+      do i=0,new_num_dens-1
+         new_densities[i]=new_dens_min+areal(i)*density_delta
+         new_densities[i]=find_index(new_densities[i],adas_densities[1][0],
+     $        old_num_dens)
+      end do
+
+      old_num_temp=num_temperatures[1]
+      new_num_temp=2*old_num_temp
+      var_alloc(new_temperatures)
+      new_temp_min=log_fac*adas_temperatures[1][0]
+      new_temp_max=log_fac*adas_temperatures[1][old_num_temp-1]
+      temp_delta=(new_temp_max-new_temp_min)
+     $     /areal(new_num_temp-1)
+      do i=0,old_num_temp-1
+         adas_temperatures[1][i]=log_fac*adas_temperatures[1][i]
+      end do
+      do i=0,new_num_temp-1
+         new_temperatures[i]=new_temp_min+areal(i)*temp_delta
+         new_temperatures[i]=find_index(new_temperatures[i],adas_temperatures[1][0],
+     $        old_num_temp)
+      end do
+      var_alloc(adas_2d)
+      
+      num_reactions=0
+      var_alloc(ionize_done)
+      var_alloc(recomb_done)
+      do i=1,nz
+         ionize_done[i]=FALSE
+         recomb_done[i]=FALSE
+      end do
+/*
+   Begin looping over the DEGAS 2 reaction list read 
+   in from the input file.
+*/
+reaction_loop: continue
+      if (! read_string(diskin,line,length)) then
+         close(unit=diskin)
+         goto input_done
+      else
+         assert(length<=len(line))
+         length=parse_string(line(:length))
+         p=0
+         assert(next_token(line,b,e,p))
+         num_reactions++
+         assert(num_reactions <= 2*nz)
+         react_sym=line(b:e)
+         irc=rc_lookup(react_sym)
+         assert(rc_check(irc))
+
+         xs_name=rc_sy(irc)
+/*
+   Being general about this since we intend to use a different
+   ordering for $+1 \rightarrow 0$ recombinations.  Assuming, though, that
+   one of the reagents is an electron $\Rightarrow$ negative charge.  Use this
+   to map to the state indexing used by ADAS.  For everything but
+   the potential, only indices |icharge| $ = 1 \rightarrow Z$ are non-zero.  For
+   the potential, $2 \rightarrow Z+1$ are non-zero.
+*/
+         reagent_charge=max(sp_z(rc_reagent(irc,1)),sp_z(rc_reagent(irc,2)))
+         if ((reaction_type[irc] == 'ionize')
+     $        || (reaction_type[irc] == 'ionize_suppress')) then
+            xs_num_dep_var=3
+            rate_file=scd_file
+            loss_file=plt_file
+            icharge=reagent_charge+1
+            assert(ionize_done[icharge] == FALSE)
+            ionize_done[icharge]=TRUE
+            icharge_pot=reagent_charge+2
+         else if (reaction_type[irc] == 'recombination') then
+            xs_num_dep_var=4  
+            rate_file=acd_file
+            loss_file=prb_file
+            icharge=reagent_charge
+            assert(recomb_done[icharge] == FALSE)
+            recomb_done[icharge]=TRUE
+            icharge_pot=reagent_charge+1
+         else
+            write(stderr,*) ' Reaction symbol ',react_sym,
+     $           ' is not of type ionize or recombination'
+            assert(.false.)
+         end if
+         
+         root_name=adas_filenames[rate_file]
+         do while (index(root_name,'/') > 0)
+            ind_dir=index(root_name,'/') 
+            root_name=root_name(ind_dir+1:)
+         end do
+         xsection_version='Derived from ADAS adf11 file '\/trim(root_name)
+      
+         xs_eval_name[1]='table'
+         xs_rank[1]=0
+         xs_var[0,1]='ionization_potential'
+         xs_units[0,1]='eV'
+         xs_mult[0,1]=electron_charge
+         xs_spacing[0,1]='linear'
+         do j=1,xs_table_rank_max
+            xs_tab_index[j,1]=1
+            xs_var[j,1]='unknown'
+            xs_spacing[j,1]='unknown'
+            xs_units[j,1]='unknown'
+            xs_mult[j,1]=zero
+            xs_min[j,1]=zero
+            xs_max[j,1]=zero
+         end do
+
+         do i=2,xs_num_dep_var
+            xs_eval_name[i]='table'
+            xs_rank[i]=2 
+            xs_spacing[0,i]='log' 
+            xs_var[1,i]='temperature'
+            xs_spacing[1,i]='log'
+            xs_units[1,i]='eV'  
+            xs_mult[1,i]=electron_charge  
+            xs_tab_index[1,i]=new_num_temp
+            xs_min[1,i]=exp(new_temp_min)
+            xs_max[1,i]=exp(new_temp_max)
+
+            xs_var[2,i]='density'  
+            xs_spacing[2,i]='log'        
+            xs_units[2,i]='cm^-3'
+            xs_mult[2,i]=const(1.0,6)
+            xs_tab_index[2,i]=new_num_dens 
+            xs_min[2,i]=exp(new_dens_min)
+            xs_max[2,i]=exp(new_dens_max)
+
+            do j=xs_rank[i]+1,xs_table_rank_max
+               xs_tab_index[j,i]=1
+               xs_var[j,i]='unknown'
+               xs_spacing[j,i]='unknown'
+               xs_units[j,i]='unknown'
+               xs_mult[j,i]=zero
+               xs_min[j,i]=zero
+               xs_max[j,i]=zero
+            end do
+         end do
+/*
+   Nothing known about the other dependent variables.
+*/
+         do i=xs_num_dep_var+1,xs_dep_var_max
+            xs_rank[i]=1
+            xs_eval_name[i]='unknown'
+            xs_var[0,i]='unknown'
+            xs_spacing[0,i]='unknown'
+            xs_units[0,i]='unknown'
+            xs_mult[0,i]=zero
+            do j=1,xs_table_rank_max
+               xs_tab_index[j,i]=1
+               xs_var[j,i]='unknown'
+               xs_spacing[j,i]='unknown'
+               xs_units[j,i]='unknown'
+               xs_mult[j,i]=zero
+               xs_min[j,i]=zero
+               xs_max[j,i]=zero
+            end do
+         end do
+
+         xs_ragged_alloc(xs_data,xs_tab_index)
+
+         xs_num_dep_var=1
+         xs_data_table(0,0,0,xs_num_dep_var)
+     $        =adas_rates[ecd_file][0][0][icharge_pot]
+
+         xs_num_dep_var++
+         xs_var[0,xs_num_dep_var]='reaction_rate' 
+         xs_units[0,xs_num_dep_var]='cm^3/s'  
+         xs_mult[0,xs_num_dep_var]=const(1.0,-6) 
+/*
+   Because |adas_2d| is dynamically allocated above, assignments
+   must be made in a subroutine.
+*/
+         call set_adas_2d(old_num_temp,old_num_dens,icharge,
+     $        adas_rates[rate_file][0][0][1],adas_2d)
+
+         call interpolate_grid2(xs_data_table(0,0,0,xs_num_dep_var),adas_2d,
+     $        xs_spacing[0,xs_num_dep_var],new_densities,new_temperatures,
+     $        new_num_dens,new_num_temp,old_num_dens,old_num_temp)
+
+         xs_num_dep_var++
+         xs_var[0,xs_num_dep_var]='background_energy_loss_rate'
+         xs_units[0,xs_num_dep_var]='W*cm^3'
+         xs_mult[0,xs_num_dep_var]=const(1.0,-6)
+
+         call set_adas_2d(old_num_temp,old_num_dens,icharge,
+     $        adas_rates[loss_file][0][0][1],adas_2d)
+
+         call interpolate_grid2(xs_data_table(0,0,0,xs_num_dep_var),adas_2d,
+     $        xs_spacing[0,xs_num_dep_var],new_densities,new_temperatures,
+     $        new_num_dens,new_num_temp,old_num_dens,old_num_temp)
+/*
+   Add ionization energy contribution.  Note that the potential needs to
+   be converted from eV to J.
+*/
+         if ((reaction_type[irc] == 'ionize')
+     $        || (reaction_type[irc] == 'ionize_suppress')) then
+            do j=0,xs_tab_index[2,xs_num_dep_var]-1
+               do i=0,xs_tab_index[1,xs_num_dep_var]-1
+                  xs_data_table(i,j,0,xs_num_dep_var)
+     $                 +=adas_rates[ecd_file][0][0][icharge_pot]*electron_charge
+     $                        *xs_data_table(i,j,0,2)
+               end do
+            end do
+         else if (reaction_type[irc] == 'recombination') then
+/*
+   Set up positive energy source to electrons from recombination.
+   Again, need to convert potential to J.      
+*/
+            xs_num_dep_var++
+            xs_var[0,xs_num_dep_var]='background_energy_source_rate'
+            xs_units[0,xs_num_dep_var]='W*cm^3'
+            xs_mult[0,xs_num_dep_var]=const(1.0,-6)
+            do j=0,xs_tab_index[2,xs_num_dep_var]-1
+               do i=0,xs_tab_index[1,xs_num_dep_var]-1
+                  xs_data_table(i,j,0,xs_num_dep_var)
+     $                 =adas_rates[ecd_file][0][0][icharge_pot]*electron_charge
+     $                       *xs_data_table(i,j,0,2)
+               end do
+            end do
+         end if
+/*
+   Fill in the unused entries in the data table.
+*/
+         do i=xs_num_dep_var+1,xs_dep_var_max
+            do j=0,xs_tab_index[3,i]-1
+               do k=0,xs_tab_index[2,i]-1
+                  do l=0,xs_tab_index[3,i]-1
+                     xs_data_table(l,k,j,i)=real_unused
+                  end do
+               end do
+            end do
+         end do
+
+         fileout=rc_filename(irc)
+         fileid = nccreate(fileout,NC_CLOBBER,nc_stat)
+
+         description = 
+     $        'Reference atomic physics data for a reaction in degas 2'
+         call ncattputc(fileid,NC_GLOBAL,'description',NC_CHAR,
+     $        string_length(description),
+     $        description,nc_stat)
+
+         call ncattputc(fileid,NC_GLOBAL,'data_version',NC_CHAR,
+     $        string_length(xsection_version),
+     $        xsection_version,nc_stat)
+      
+         xs_ncdef(fileid)
+         call ncendef(fileid,nc_stat)
+         xs_ncwrite(fileid)
+/*
+   Dump data out to a text file to facilitate an external check.
+*/
+         if (num_reactions == 1) then
+            open(unit=diskout,file='adaswrite_out.txt',status='unknown',
+     $           form='formatted')
+            write(diskout,'(i3,a)') new_num_temp,' Temperatures (eV)'
+            write(diskout,'(1p,10(e11.4,2x))') SP 
+     $           (exp(new_temp_min+areal(i)*temp_delta),i=0,new_num_temp-1)
+            write(diskout,*)
+            write(diskout,'(i3,a)') new_num_dens,' Densities (cm^-3)'
+            write(diskout,'(1p,10(e11.4,2x))') SP
+     $           (exp(new_dens_min+areal(i)*density_delta),i=0,new_num_dens-1)
+            write(diskout,*)
+            write(diskout,'(a,i3)') ' Z=',nz
+         end if
+         write(diskout,'(a,a,i2,a)') trim(react_sym),' ',xs_num_dep_var,
+     $        ' Variables'
+         do k=1,xs_num_dep_var
+            write(diskout,'(8a)') trim(xs_var[0,k]),' ',trim(xs_units[0,k]),
+     $  '; Function of ((',trim(xs_var[1,k]),'), ',trim(xs_var[2,k]),')'
+            write(diskout,'(1p,10(e11.4,2x))') SP
+     $       ((xs_data_table(i,j,0,k),i=0,xs_tab_index[1,k]-1),j=0,xs_tab_index[2,k]-1)
+            write(diskout,*)
+         end do
+
+         var_free(xs_data_tab)
+         call ncclose(fileid,nc_stat)
+
+         go to reaction_loop
+      end if  // Loop over reactions
+
+      input_done: continue
+      close(unit=diskout)
+/*
+   The tests above on |ionize_done| and |recombine_done| should
+   eliminate the possibility of exceeding $2 \times $|nz| reactions.
+   But, check it just in case.  If there are fewer than
+   $2 \times$|nz|, loop through the arrays to find what's missing.
+*/      
+      assert(num_reactions <= 2*nz)
+      if (num_reactions < 2*nz) then
+         do i=1,nz
+            if (ionize_done[i] == FALSE)
+     $           write(stderr,*) ' Missing ionization for icharge = ',i
+            if (recomb_done[i] == FALSE)
+     $           write(stderr,*) ' Missing recombination for icharge = ',i
+         end do
+         assert(.false.)
+      end if
+ 
+      return
+      end
+      
+@* Copy 2-D ADAS data to exact size pointer array.  Need to do this
+in a subroutine, away from the allocation, for the array indexing to
+work correctly.
+
+@<Functions...@>=
+      subroutine set_adas_2d(old_num_temp,old_num_dens,icharge,
+     $           adas_rates,adas_2d)
+
+      implicit_none_f77
+      implicit_none_f90
+
+      integer old_num_temp,old_num_dens,icharge    // Input
+      real adas_rates[0:max_densities-1][0:max_temperatures-1][max_charge],
+     $     adas_2d[0:old_num_dens-1][0:old_num_temp-1]
+
+      integer i,j                                  // Local
+
+      do i=0,old_num_dens-1
+         do j=0,old_num_temp-1
+            adas_2d[i][j]=const(1.,1)**adas_rates[i][j][icharge]
+         end do
+      end do
+
+      return
+      end
+

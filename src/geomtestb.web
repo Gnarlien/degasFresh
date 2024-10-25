@@ -1,0 +1,51 @@
+% $Id: a3b9111952454a239c8bf3a077540f666822653c $
+\Title{geomtesta}
+
+
+@* A test program for the geometry routines.
+
+\ID{$Id: a3b9111952454a239c8bf3a077540f666822653c $}
+
+@m FILE 'geomtesta.web'
+@m SP _UNQUOTE(' ')
+@I macros.hweb
+
+@I geomint.hweb
+
+@ The main program.
+
+@a
+      program geometry_test
+      implicit_none_f77
+      implicit_none_f90
+
+      call readfilenames
+      call exercise
+
+      stop
+      end
+
+      @<Functions and Subroutines@>
+
+@ Exercise the locate function
+
+@<Functions...@>=
+      subroutine exercise
+      implicit_none_f77
+      implicit_none_f90
+      real x[3],a[3],b[3],alen,blen                 // Local
+      
+      call read_geometry
+      vc_set(x,-const(1.9),zero,-const(1.9))
+      vc_set(a,one,zero,zero)
+      vc_set(b,zero,zero,one)
+      alen=const(3.8)
+      blen=const(3.8)
+      
+      call output_slice('geomtesta.hdf',.true.,x,a,b,alen,blen)
+
+      return
+      end
+
+
+@* INDEX.

@@ -1,0 +1,128 @@
+@* Zone definitions.
+
+% $Id: 44d7fe8a9648289a39c46451ed0e37bdd8733402 $
+
+\ID{$Id: 44d7fe8a9648289a39c46451ed0e37bdd8733402 $}
+
+@ Information about zones is held in arrays in common blocks.  An zone is
+identified by an integer indexing into these arrays.
+
+@f zn_decl integer
+
+@m zn_args(x) x
+
+@m zn_dummy(x) x
+
+@m zn_decl(x) integer x @;
+
+@m zn_decls logical check_zone
+
+@m zn_copy(x,y) y=x @;
+
+@m zn_check(x) check_zone(zn_args(x))
+
+@m zn_type(x) zone_type[x]
+@m zn_index(x,i) zone_index[i,x]
+@m zn_pointer(x) zone_pointer[x]
+@m zn_volume(x) zone_volume[x]
+
+@ Length specifications.
+
+@m zn_index_max 4
+@m zi_ix 1         // Indices used with |zone_index|
+@m zi_iz 2
+@m zi_iy 3         // Much newer, hence, the odd ordering.
+@m zi_ptr 4
+
+@m zn_type_max 4
+@m zn_undefined 0
+@m zn_vacuum 1
+@m zn_plasma 2
+@m zn_solid 3
+@m zn_exit 4
+
+@ Variable definitions.
+
+@a
+      package_init(zn)
+      define_var_pk(zn,zn_num,INT)
+      define_dimen_pk(zn,zone_type_ind,zn_type_max)
+      define_dimen_pk(zn,zone_index_ind,zn_index_max)
+      define_dimen_pk(zn,zone_ind,zn_num)
+      define_var_pk(zn,zone_type_num,INT,zone_type_ind)
+      define_varp_pk(zn,zone_type,INT,zone_ind)
+      define_varp_pk(zn,zone_index,INT,zone_index_ind,zone_ind)
+      define_var_pk(zn,zone_index_min,INT,zone_index_ind)
+      define_var_pk(zn,zone_index_max,INT,zone_index_ind)
+      define_varp_pk(zn,zone_pointer,INT,zone_ind)
+      define_varp_pk(zn,zone_volume,FLOAT,zone_ind)
+      define_varp_pk(zn,zone_center,FLOAT,vector,zone_ind)
+      define_varp_pk(zn,zone_min,FLOAT,vector,zone_ind)
+      define_varp_pk(zn,zone_max,FLOAT,vector,zone_ind)
+      define_varlocal_pk(zn,zone_version,CHAR,string)
+      package_end(zn)
+
+@ Setting up zone information.
+
+@m zn_type_set(zone,type) zn_type(zone)=type;
+      zone_type_num[type]=zone_type_num[type]+1;
+      zn_pointer(zone)=zone_type_num[type] @;
+
+@* Zone class attribute descriptions.
+
+@ Define a zone.  Prefix is |zn|.  
+
+The identifier |zone| is an integer variable.
+
+\begin{description}
+  \item[|zn_type(zone)|] Is one of |zn_vacuum|, |zn_plasma|, |zn_solid|
+indicating the type of zone.
+
+  \item[|zn_index(zone,l)|] For $l=1, \rightarrow$ |zn_index_max| 
+gives the fluid code indices of the zone. More specifically, $l=1$ and $2$
+are for the 2-D fluid codes. $l=3$ is an index for the third dimension
+in nearly symmetric 3-D cases. In these cases, the $l=1$ and $l=2$ values
+do not vary in the third dimension; this index allows them to be
+distinguished.  The $l=4$ index then serves as a pointer back to a
+reference zone, the one for which |zn_index(zone,zi_ptr)| = |zone|,
+for that set. This allows, say, 2-D information specified at a single
+value of the $l=3$ index to be mapped to the others along the
+third dimension.
+
+  \item[|zn_pointer(zone)|] Is a pointer into arrays specific for different 
+types of zones: plasma, solid, etc.
+
+  \item[|zn_volume(zone)|] Is the volume of the zone.
+\end{description}
+
+@ Internal variables in the zone class.
+
+\begin{description}
+  \item[|zn_num|] Number of zones in the problem.
+
+  \item[|zone_center[zone]|] Is an approximate center for the zone; accuracy 
+depends on the geometry.  This is always a Cartesian coordinate. In
+2-D cases, the $y$ coordinate is usually fixed at 0; in some 2-D
+plane symmetric cases it may have a (constant) nonzero value.
+
+  \item[|zone_min[zone]|] Minimum value of the coordinates of the corners of 
+the zone; the minimum is performed separately for each component so that this 
+point is not necessarily part of the zone. In 1-D and 2-D cases, the
+$y$ coordinate is always $= 0$. In planar 3-D cases, it corresponds to
+the Cartesian $y$ value. In cylindrical 3-D cases, it contains an
+azimuthal angle in radians.
+
+  \item[|zone_max[zone]|] Maximum value of the coordinates of the corners of 
+the zone; the maximum is performed separately for each component so that this 
+point is not necessarily part of the zone. In 1-D and 2-D cases, the
+$y$ coordinate is always $= 0$. In planar 3-D cases, it corresponds to
+the Cartesian $y$ value. In cylindrical 3-D cases, it contains an
+azimuthal angle in radians.
+
+  \item[|zone_index_min[l]|] Minimum value of |zn_index(zone,l)| for
+$l=1, \rightarrow$ |zn_index_max|.
+
+  \item[|zone_index_max[l]|] Maximum value of |zn_index(zone,l)| for
+$l=1, \rightarrow$ |zn_index_max|.
+\end{description}
+

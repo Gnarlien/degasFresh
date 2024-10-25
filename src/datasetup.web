@@ -1,0 +1,45 @@
+% $Id: dab582bc2dd3f936a3dc355ac6ef62ed0cdafeae $
+\Title{datasetup}
+
+
+@* Introduction.
+
+\ID{$Id: dab582bc2dd3f936a3dc355ac6ef62ed0cdafeae $}
+
+Introduction\ldots
+
+@m FILE 'datasetup.web'
+
+@I macros.hweb
+
+@ The unnamed module.
+
+@a
+      program datasetup
+      implicit_none_f77
+      implicit_none_f90
+
+      call readfilenames
+      call read_elements
+      call nc_write_elements
+      call read_species
+      call nc_write_species
+      call read_reactions
+      call nc_write_reaction
+
+      call read_materials
+      call nc_write_materials
+      call read_pmi
+      call nc_write_pmi
+
+      stop
+      end
+
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

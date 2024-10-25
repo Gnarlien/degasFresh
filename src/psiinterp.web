@@ -1,0 +1,454 @@
+% $Id: c77cea921fb2cba5d6bd421fc8c6f0df532d3938 $
+\Title{psiinterp}
+
+@* Routines for interpolating poloidal flux and magnetic field values.
+
+\ID{$Id: c77cea921fb2cba5d6bd421fc8c6f0df532d3938 $}
+
+@m FILE 'psiinterp.web'
+
+@m open_file(aunit,aname) open(unit=aunit,file=aname,status='old',
+form='formatted',iostat=open_stat);
+      assert(open_stat == 0) @;
+
+@I macros.hweb
+@I string.hweb
+@I sysdep.hweb
+@I efititp.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and subroutines@>
+
+@ Initialize flux interpolation routine.  Returns the limiter / separatrix
+flux (absolute) for use in producing final output.
+
+@<Functions...@>=
+      subroutine init_psi_interp(g_file)
+
+      define_dimen(r_ind,ef_nr)
+      define_dimen(z_ind,ef_nz)
+      define_varp(fg,FLOAT,r_ind)
+      define_varp(pg,FLOAT,r_ind)
+      define_varp(ffg,FLOAT,r_ind)
+      define_varp(ppg,FLOAT,r_ind)
+      define_varp(rr,FLOAT,r_ind)
+      define_varp(zz,FLOAT,z_ind)
+      define_varp(psis,FLOAT,r_ind)
+      define_varp(pfm,FLOAT,r_ind,z_ind)
+
+      use bspline
+      implicit_none_f77
+      ef_common                                         // Common
+      implicit_none_f90
+
+      character*FILELEN g_file                          // Input
+
+      integer open_stat,g_fit,diskin4                   // Local
+      character*40 g_title
+      character*8 g_date
+
+      @<Memory allocation interface@>
+      sy_decls
+      st_decls
+
+      declare_varp(fg)
+      declare_varp(pg)
+      declare_varp(ffg)
+      declare_varp(ppg)
+      declare_varp(rr)
+      declare_varp(zz)
+      declare_varp(psis)
+      declare_varp(pfm)
+      
+      diskin4=diskin+4
+      open_file(diskin4,g_file)
+      read(diskin4,'(a40,a8,3(i4))') g_title,g_date,g_fit,ef_nr,ef_nz
+/*
+   Allocate arrays read in from EFIT file.
+*/
+      var_alloc(fg)
+      var_alloc(pg)
+      var_alloc(ffg)
+      var_alloc(ppg)
+      var_alloc(rr)
+      var_alloc(zz)
+      var_alloc(psis)
+      var_alloc(pfm)
+
+      call read_efit(diskin4,ef_nr,ef_nz,rr,zz,psis,fg,pg,ffg,ppg,pfm,
+     &               ef_psilim,ef_rma,ef_zma)
+/*
+   And arrays used in the spline fitting process.
+*/
+      var_alloc(ef_psi_knot)
+      var_alloc(ef_r_knot)
+      var_alloc(ef_z_knot)
+      var_alloc(ef_psi_bscoef)
+      var_alloc(ef_i_bscoef)
+/*
+   Set up knots for the coordinates.
+*/
+      call dbsnak(ef_nr,psis,ef_korder,ef_psi_knot)
+
+      ef_min_r=rr(1) 
+      ef_max_r=rr(ef_nr)
+      ef_min_z=zz(1)
+      ef_max_z=zz(ef_nz) 
+
+      call dbsnak(ef_nr,rr,ef_korder_rz,ef_r_knot)
+      call dbsnak(ef_nz,zz,ef_korder_rz,ef_z_knot)
+/*
+   This routine actually sets up the spline for the flux.
+*/
+      CALL dbs2IN (ef_nr, rr, ef_nz, zz, pfm, ef_nr,
+     $  ef_korder_rz, ef_korder_rz, ef_r_knot, ef_z_knot, ef_psi_bscoef)
+/*
+   Now adding a spline for $I(\psi)$.  This is just 1-D, and we
+   will not need to compute derivatives.
+*/
+      call dbsint(ef_nr,psis,fg,ef_korder,ef_psi_knot,ef_i_bscoef)
+/*
+   Test spline interpolation.
+*/
+      call test_interp(ef_nr,ef_nz,pfm,psis,fg)
+
+      return
+      end
+
+@ Test interpolation.
+
+@<Functions...@>=
+      subroutine test_interp(nr,nz,pfm,psis,fg)
+
+      implicit_none_f77
+      ef_common
+      implicit_none_f90
+      
+      integer nr,nz                                    // Input
+      real pfm[nz][nr],psis[nr],fg[nr]
+
+      integer ir,iz                                    // Testing only
+      real maxerr,toterr,ztest,rtest,psi_spline,
+     $     psi_value,error,avgerr,psi_test,i_spline
+      external psi_interp,i_interp
+      real psi_interp,i_interp
+
+      maxerr=zero
+      toterr=zero
+      do iz=1,ef_nz
+         ztest=ef_min_z+((ef_max_z-ef_min_z)/areal(ef_nz-1))*areal(iz-1)
+         do ir=1,ef_nr
+            rtest=ef_min_r+((ef_max_r-ef_min_r)/areal(ef_nr-1))*areal(ir-1)
+            psi_value=pfm[iz][ir]
+            psi_spline=psi_interp(rtest,ztest,0,0)
+            error=abs(psi_spline-psi_value)/max(abs(psi_value),const(1.,-10))
+            if (error > maxerr) maxerr=error
+            toterr+=error
+         end do
+      end do
+      avgerr=toterr/areal(ef_nr*ef_nz)
+/*
+   Test $I(\psi)$ interpolation.
+*/
+      maxerr=zero
+      toterr=zero
+      do ir=1,ef_nr
+         psi_test=psis[ir]
+         i_spline=i_interp(psi_test,0)
+         error=abs(i_spline-fg[ir])/max(abs(fg[ir]),const(1.,-10))
+         if (error > maxerr) maxerr=error
+         toterr+=error
+      enddo
+      avgerr=toterr/areal(ef_nr)
+
+      return
+      end
+
+@ Subroutine to read standard EFIT geqdsk files.      
+
+@<Functions...@>=
+      subroutine read_efit(nunit,nr,nz,rr,zz,psis,fg,pg,ffg,ppg,pfm,
+     $                     psilim,rma,zma)
+
+      implicit_none_f77
+      implicit_none_f90
+      
+      integer nunit,nr,nz                                // Input
+      real psilim,rma,zma                                // Output
+      real rr[nr],zz[nz],psis[nr],fg[nr],pg[nr],ffg[nr],
+     $     ppg[nr],pfm[nz][nr]
+
+      integer i,j,ir,iz                                  // Local
+      real rdim,zdim,rcntc,redge,zmsmid,psimin,
+     $     btorc,dummy
+      
+      read(nunit,'(5e16.9)') rdim, zdim, rcntc, redge, zmsmid
+      read(nunit,'(5e16.9)') rma, zma, psimin, psilim, btorc
+      read(nunit,'(5e16.9)') dummy, dummy, dummy, dummy, dummy
+      read(nunit,'(5e16.9)') dummy, dummy, dummy, dummy, dummy
+      read(nunit,'(5e16.9)') SP (fg(i),i=1,nr)
+      read(nunit,'(5e16.9)') SP (pg(i),i=1,nr)
+      read(nunit,'(5e16.9)') SP (ffg(i),i=1,nr)
+      read(nunit,'(5e16.9)') SP (ppg(i),i=1,nr)
+      read(nunit,'(5e16.9)') SP ((pfm[j][i],i=1,nr),j=1,nz)
+
+      close(unit=nunit)
+
+      do ir=1,nr
+         rr[ir]=(areal(ir-1)/(areal(nr-1)))*rdim+redge
+         psis[ir]=(areal(ir-1)/(areal(nr-1)))*(psilim-psimin)
+/*
+   Subtract |psimin| so that the axis is at |pfm|=0. Note that this
+   differs from what is done in |efit2dg2d|.
+*/
+         do iz=1,nz
+            pfm[iz][ir]=pfm[iz][ir]-psimin
+         end do
+      end do
+
+      do iz=1,nz
+         zz[iz]=((areal(iz-1)-(areal(nz-1)/two))/(areal(nz-1)))*zdim+zmsmid
+      end do
+/*
+   To match what XGC does, need to actually reference everything to 
+   the minimum |psi|.  The |pfm| ends up as above still.
+*/
+      psilim=psilim-psimin
+
+      return
+      end
+
+@ Evaluate spline interpolation to get flux or its derivatives at input
+coordinates.
+
+@<Functions...@>=
+      function psi_interp(r_in,z_in,r_der,z_der)
+
+      use bspline
+      implicit_none_f77
+      ef_common                                         // Common
+      implicit_none_f90
+
+      real psi_interp                                   // Function
+      integer r_der,z_der                               // Input
+      real r_in,z_in
+
+      assert((r_in >= ef_min_r) && (r_in <= ef_max_r))
+      assert((z_in >= ef_min_z) && (z_in <= ef_max_z))
+/*
+   This is the more general call to evaluate the derivative
+   of the spline in both directions.
+*/
+            
+      psi_interp=dbs2dr(r_der,z_der,r_in,z_in,ef_korder_rz,ef_korder_rz,
+     $           ef_r_knot,ef_z_knot,ef_nr,ef_nz,ef_psi_bscoef)
+/*
+   This is the more specific, but equivalent, call that just
+   evaluates the spline.
+*/
+@#if 0
+      psi_interp=dbs2vl(r_in,z_in,ef_korder_rz,ef_korder_rz,
+     $           ef_r_knot,ef_z_knot,ef_nr,ef_nz,ef_psi_bscoef)
+@#endif
+
+      return
+      end
+
+@ Evaluate spline interpolation to get I function or its
+derivatives at the input flux value.
+
+@<Functions...@>=
+      function i_interp(psi_in, i_der)
+
+      use bspline
+      implicit_none_f77
+      ef_common                                         // Common
+      implicit_none_f90
+
+      real i_interp                                     // Function
+      integer i_der                                     // Input
+      real psi_in
+
+      real psi                                          // Local
+/*
+   Check inputs?
+*/
+      if (psi_in <= ef_psilim) then
+         psi=psi_in
+      else
+         psi=ef_psilim
+      end if
+      i_interp=dbsder(i_der,psi,ef_korder,ef_psi_knot,ef_nr,ef_i_bscoef)
+
+      return
+      end
+
+@ Compute magnetic field vector from spline interpolation of flux functions.
+
+@<Functions...@>=
+   subroutine bvec_interp(r,z,vc_dummy(b))
+
+      use bspline
+      implicit_none_f77
+      ef_common                                         // Common
+      implicit_none_f90
+
+      real r,z                                          // Input
+      vc_decl(b)                                        // Output
+
+      real psi,dpsi_dr,dpsi_dz,fi                       // Local
+
+      external psi_interp,i_interp
+      real psi_interp,i_interp
+
+      psi=psi_interp(r,z,0,0)
+      dpsi_dr=psi_interp(r,z,1,0)
+      dpsi_dz=psi_interp(r,z,0,1)
+
+      fi=i_interp(psi,0)
+
+      vc_set(b,-dpsi_dz/r,fi/r,dpsi_dr/r)
+
+      return
+      end
+
+@ Follow a field line through a specified toroidal angle.  
+
+In particular, the initial location, expressed as a 
+Cartesian coordinate vector, |x|, is input, along with 
+an initial distance along the field line, |l_org|. The desired
+increment in toroidal angle is specified as |delta_phi|.
+At least presently, the order of the Runge-Kutta integrator
+can be first (|order| = 1), second (|order| = 2), or fourth
+(any other value for |order|).  The routine returns the 
+end point of the integration in the Cartesian coordinate
+vector |x_dest| and the field line length, |l_dest|.
+
+Like the interpolation routines, this started out as subroutine
+field_following_pos2 from XGC-1 / charge.F90.  Noticed that the fourth
+order Runge-Kutta part is in turn very similar to RK4 in Numerical
+Recipes.  Both combine the second and third increments to make the final
+step a little neater, at the expense of clarity.  Made the fourth
+increment explicit here so as to match the expression in the text more
+clearly.
+
+Note that XGC1 orders the vectors in this routine as (R,Z), while 
+the convention for vectors here is (R, $\phi$, Z).   Variables
+here are labeled explicitly to avoid confusion.
+
+@m bvec_interpol(r,z,br,bphi,bz,btot)
+      call bvec_interp(r,z,vc_args(b));
+      br=b[1];
+      bphi=b[2];
+      bz=b[3];
+      btot=sqrt(b[1]^2+b[2]^2+b[3]^2)@;
+
+@<Functions...@>=
+      subroutine follow_field(order,vc_dummy(x),l_org,delta_phi,
+     $                        vc_dummy(x_dest),l_dest)
+
+      implicit_none_f77
+      implicit_none_f90
+
+      integer order                                       // Input
+      vc_decl(x)    
+      real l_org,delta_phi
+
+      vc_decl(x_dest)                                     // Output
+      real l_dest
+
+      real phi0,r_org,z_org,br,bphi,bz,r_dest,z_dest,     // Local
+     $     hh,r_mid,z_mid,h6,dr1,dz1,r_tmp,z_tmp,           
+     $     dr2,dz2,dr3,dz3,dr4,dz4,phi,r,z,btot,
+     $     l_mid,dl1,l_tmp,dl2,dl3,dl4
+
+      vc_decl(b)
+
+      phi0=atan2(x[2],x[1])
+      if (phi0 > PI) phi0=phi0-two*PI
+      r_org=sqrt(x[1]**2+x[2]**2)
+      z_org=x[3]
+
+      bvec_interpol(r_org,z_org,br,bphi,bz,btot)
+/*
+   First order.
+*/
+      if (order == 1) then     
+         r_dest=r_org+(br/bphi)*(r_org*delta_phi)
+         z_dest=z_org+(bz/bphi)*(r_org*delta_phi)
+         l_dest=l_org+(btot/bphi)*(r_org*delta_phi)
+/*
+   Second order.
+*/
+      else if (order == 2) then  
+         hh=half*delta_phi    
+         r_mid=r_org+(br/bphi)*(r_org*hh)
+         z_mid=z_org+(bz/bphi)*(r_org*hh)
+         l_mid=l_org+(btot/bphi)*(r_org*hh)
+         bvec_interpol(r_mid,z_mid,br,bphi,bz,btot)
+/*
+   Advance using derivative at mid-point.
+*/
+         r_dest=r_org+(br/bphi)*(r_mid*delta_phi)
+         z_dest=z_org+(bz/bphi)*(r_mid*delta_phi)
+         l_dest=l_org+(btot/bphi)*(r_mid*delta_phi)
+/*
+   Fourth order.  To compare with the Numerical
+   Recipes expression, note that |dr1|, etc. are
+   actually $d R / d \phi$, etc.  And then the 
+   |r_tmp| and |z_tmp| are the arguments to
+   $f^{\prime}$ in Numerical Recipes.
+*/
+      else   
+         hh=half*delta_phi
+         h6=delta_phi/const(6.)
+/*
+   First step, using derivative from above 
+*/
+         dr1=(br/bphi)*r_org 
+         r_tmp=r_org+hh*dr1  
+         dz1=(bz/bphi)*r_org 
+         z_tmp=z_org+hh*dz1
+         dl1=(btot/bphi)*r_org 
+         l_tmp=l_org+hh*dl1
+/*
+   Second step
+*/
+         bvec_interpol(r_tmp,z_tmp,br,bphi,bz,btot)
+         dr2=(br/bphi)*r_tmp
+         r_tmp=r_org+hh*dr2
+         dz2=(bz/bphi)*r_tmp
+         z_tmp=z_org+hh*dz2
+         dl2=(btot/bphi)*r_tmp
+         l_tmp=l_org+hh*dl2
+/*
+   Third step
+*/
+         bvec_interpol(r_tmp,z_tmp,br,bphi,bz,btot)
+         dr3=(br/bphi)*r_tmp
+         r_tmp=r_org+delta_phi*dr3
+         dz3=(bz/bphi)*r_tmp
+         z_tmp=z_org+delta_phi*dz3
+         dl3=(btot/bphi)*r_tmp
+         l_tmp=l_org+delta_phi*dl3
+/*
+   Fourth step
+*/
+         bvec_interpol(r_tmp,z_tmp,br,bphi,bz,btot)
+         dr4=(br/bphi)*r_tmp
+         r_dest=r_org+h6*(dr1+two*dr2+two*dr3+dr4)
+         dz4=(bz/bphi)*r_tmp
+         z_dest=z_org+h6*(dz1+two*dz2+two*dz3+dz4)
+         dl4=(btot/bphi)*r_tmp
+         l_dest=l_org+h6*(dl1+two*dl2+two*dl3+dl4)
+      end if
+
+      phi=phi0+delta_phi
+      x_dest[1]=r_dest*cos(phi)
+      x_dest[2]=r_dest*sin(phi)
+      x_dest[3]=z_dest
+
+      return
+      end 

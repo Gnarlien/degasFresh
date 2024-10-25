@@ -1,0 +1,109 @@
+@* Reaction definitions.
+
+% $Id: 9cb89fa72c8efd949bb0d27dd682155e8a9538e8 $
+
+\ID{$Id: 9cb89fa72c8efd949bb0d27dd682155e8a9538e8 $}
+
+@ Information about reactions is held in arrays in common blocks.  An
+reaction is identified by an integer indexing into these arrays.
+
+@f rc_decl integer
+
+@m rc_generic_no 0
+@m rc_generic_yes 1
+
+@m rc_args(x) x
+@m rc_dummy(x) x
+@m rc_decl(x) integer x @;
+@m rc_copy(x,y) y=x @;
+@m rc_check(x) (x > 0 && x <= rc_num)
+@m rc_name(x) reaction_name[x]
+@m rc_sy(x)   reaction_sy[x]
+@m rc_emitter(x) reaction_emitter[x]
+@m rc_reagent_num(x) reaction_reagent_num[x]
+@m rc_gen(x) reaction_generic[x]
+@m rc_product_num(x) reaction_product_num[x]
+@m rc_reagent(x,i)   reaction_reagent[i,x]
+@m rc_product(x,i)   reaction_product[i,x]
+@m rc_filename(x)    reaction_filename[x]
+@m rc_reaction_type(x) reaction_type[x]
+@m rc_lookup(sy) string_lookup(sy,reaction_sy,rc_num)
+
+@ Length specifications.
+
+@m rc_sy_len 24
+@m rc_name_len 80
+@m rc_type_len 32
+@m rc_reagent_max 2
+@m rc_product_max 4
+
+@ Variable definitions.
+
+@a
+      package_init(rc)
+      define_dimen_pk(rc,reaction_symbol_string,rc_sy_len)
+      define_dimen_pk(rc,reaction_name_string,rc_name_len)
+      define_dimen_pk(rc,reaction_type_string,rc_type_len)
+      define_var_pk(rc,rc_num,INT)
+      define_dimen_pk(rc,reaction_ind,rc_num)
+      define_dimen_pk(rc,reaction_filename_string,FILELEN)
+      define_dimen_pk(rc,reagent_ind,rc_reagent_max)
+      define_dimen_pk(rc,product_ind,rc_product_max)
+      define_varp_pk(rc,reaction_name,CHAR,reaction_name_string,reaction_ind)
+      define_varp_pk(rc,reaction_type,CHAR,reaction_type_string,reaction_ind)
+      define_varp_pk(rc,reaction_sy,CHAR,reaction_symbol_string,reaction_ind)
+      define_varp_pk(rc,reaction_emitter,INT,reaction_ind)
+      define_varp_pk(rc,reaction_reagent_num,INT,reaction_ind)
+      define_varp_pk(rc,reaction_generic,INT,reaction_ind)
+      define_varp_pk(rc,reaction_product_num,INT,reaction_ind)
+      define_varp_pk(rc,reaction_reagent,INT,reagent_ind,reaction_ind)
+      define_varp_pk(rc,reaction_product,INT,product_ind,reaction_ind)
+      define_varp_pk(rc,reaction_filename,CHAR,reaction_filename_string,reaction_ind)
+      define_varlocal_pk(rc,reaction_version,CHAR,string)
+      package_end(rc)
+
+@* Reaction class attribute descriptions.
+
+@ Define reactions.  Prefix is |rc|.  
+
+The identifier |reaction| is an
+integer variable.
+
+\begin{description}
+  \item[|rc_name(reaction)|] Is the name of the reaction 
+(length |rc_name_len|).
+
+  \item[|rc_sy(reaction)|] Is the symbolic name of the reaction 
+(length |rc_sy_len|).
+
+  \item[|rc_emitter(reaction)|] Is the reagent (if negative) or product 
+(if positive) number to be associated with a photon emitted from this reaction.
+
+  \item[|rc_reagent_num(reaction)|] Is the number of reagents in the reaction
+(maximum value |rc_reagent_max|).
+
+  \item[|rc_reagent(reaction,i)|] Is the $i$th species reagent in the reaction.
+
+  \item[|rc_gen(reaction)|] Contains the value |rc_generic_yes| is this
+reaction (and its data) can be applied to species isotopically
+equivalent to |rc_reagent(reaction,i)|; the value |rc_generic_no|
+indicates that the reaction is species-specific.
+
+  \item[|rc_product_num(reaction)|] Is the number of products (maximum value
+|rc_product_max|).
+
+  \item[|rc_product(reaction,i)|] Is the species of the $i$th product.
+
+  \item[|rc_filename(reaction)|] netCDF filename containing the reaction 
+rate and handling data (class |xs|) for the reaction.
+
+  \item[|rc_reaction_type(reaction)|] The reaction type determines 
+which routines will be used to determine the reaction product velocities 
+during run time.
+\end{description}
+
+@ Routines using reactions.
+
+|rc_lookup(symbol)| returns the integer reaction number corresponding to
+the symbolic name |symbol|.
+

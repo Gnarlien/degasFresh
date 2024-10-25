@@ -1,0 +1,344 @@
+ % $Id: 0434ed58b6aa3427b7dda15f313b9fc06b450a5e $
+\Title{cmodgpi_camera4}
+
+% $Log: $
+
+@* Routine to set up camera views for use with the C-Mod X-point 
+and midplane Gas Puff Imaging experiments.  These characterizations are based
+on information sent by Jim Terry on 9/26/2007 (X-point) and 9/2008
+(midplane).
+
+\ID{$Id: 0434ed58b6aa3427b7dda15f313b9fc06b450a5e $}
+
+@m FILE 'cmodgpi_camera4.web'
+
+@I macros.hweb
+@I sysdep.hweb
+@I detector.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ GPI camera views.  In this version, the  $9 \times 10$ APD array
+is added onto the midplane GPI camera as a second detector group.
+The X-point camera remains a separate option.  Would still, however,
+generate the APD data during the main run.  The chord integeration
+data for the GPI would be passed on to postdetector.
+
+@m XPOINT 0
+@m MID 1
+
+@m VIEW MID
+
+@m nx 64  // Number of chords in radial direction.
+@m ny 64  // Number of chords in poloidal direction.
+@m cx_min zero
+@m cx_max const(6.3,1)  // Number of radial pixels in real camera.
+@m cy_min zero
+@m cy_max const(6.3,1) // Number of poloidal pixels in real camera.
+@m grp_name 'GPI chords'
+
+@#if (VIEW == XPOINT)
+ 
+@m tr_r const(0.7176)  // $R$ and $Z$ of the corners of the 
+@m tr_z const(-0.2637) // camera''s ``target plane''
+@m br_r const(0.7376)
+@m br_z const(-0.3272)
+@m tl_r const(0.6547)
+@m tl_z const(-0.2836)
+@m bl_r const(0.6751)
+@m bl_z const(-0.3471)
+@m phi_tp const(33.0)*PI/const(1.8,2) // Toroidal angle of the ``target plane''
+@m r_p0 const(1.003)                  // Camera vertex
+@m z_p0 const(-0.252)
+@m phi_p0 const(-13.25)*PI/const(1.8,2)
+@m view_width const(3.9,-1)*PI/const(1.8,2)  // View half-width
+
+@m grp_views_dim nx*ny
+@m view_base 0
+
+@#elif (VIEW == MID)
+
+@m tr_r const(0.920)      // From Jim''s email: 
+@m tr_z const(1.0,-3)     // "Calibration for 2010 GPI & APD"
+@m br_r const(0.9170)
+@m br_z const(-5.80,-2)
+@m tl_r const(0.8610)
+@m tl_z const(2.0,-3)
+@m bl_r const(0.8595)
+@m bl_z const(-5.70,-2)              // All of the vertex data are as before:
+@m phi_tp const(-18.48)*PI/const(1.8,2) // Toroidal angle of the target plane
+@m r_p0 const(1.025)                    // Camera vertex
+@m z_p0 const(9.0,-2)
+@m phi_p0 const(-54.00)*PI/const(1.8,2)
+@m view_width const(5.,-2)*PI/const(1.8,2)  // View half-width
+
+@m nx_apd 9
+@m ny_apd 10
+@m grp_name_apd 'APD views'
+@m r_apd const(1.025)                         // APD "vertex"
+@m z_apd const(-3.0,-2)
+@m phi_apd const(-54.00)*PI/const(1.8,2)
+@m phi_apd_tp const(-18.48)*PI/const(1.8,2)   // APD target plane
+@m view_width_apd const(1.8,-1)*PI/const(1.8,2) 
+
+@m grp_views_dim nx_apd*ny_apd+nx*ny
+@m view_base     nx_apd*ny_apd
+@#endif
+
+@<Functions...@>=
+      subroutine detector_setup
+
+      implicit_none_f77
+      de_common
+      zn_common
+      implicit_none_f90
+
+      @<Memory allocation interface@>
+
+@#if (VIEW == XPOINT)
+      detector_total_views=nx*ny
+@#elif (VIEW == MID)
+      detector_total_views=nx_apd*ny_apd + nx*ny
+@#endif
+      var_alloc(de_view_points)
+      var_alloc(de_view_algorithm)
+      var_alloc(de_view_halfwidth)
+
+      call initialize_zone_frags
+      
+      de_grps=0
+      de_view_size=0
+      var_alloc(de_view_tab)
+
+      call detector_setup_a
+
+      return
+      end
+
+@ Extension of the above subroutine.  Statements actually making
+assignments to the detector pointer arrays (|de_zone_frags|
+specfically) need to be separated from their allocation above
+so that their array indexing gets handled correctly.
+
+@<Functions...@>=
+      subroutine detector_setup_a
+
+      define_varp(zone_frags,FLOAT,zone_ind)
+
+      implicit_none_f77
+      de_common
+      zn_common
+      implicit_none_f90
+
+      integer view,num,var,tab_index,spacing,ix,iy,i,zone,ix_max,iy_max
+      integer grp_views[grp_views_dim]
+      real var_min,var_max,mult
+
+      declare_varp(zone_frags)
+
+      @<Memory allocation interface@>
+
+      var_alloc(zone_frags)
+
+/*
+   Use local variables for |nx| and |ny| so the arguments to |gpi_views|
+   can have other values than those given by the macros at the top of this
+   file.
+*/
+@#if (VIEW == MID)
+      ix_max=nx_apd
+      iy_max=ny_apd
+      do ix=1,nx_apd
+         do iy=1,ny_apd
+            view=(iy-1)*nx_apd+ix
+
+            call apd_views(ix,ix_max,iy,iy_max,
+     $           vc_args(de_view_points[view][de_view_start]),
+     $           de_view_halfwidth[view],de_view_algorithm[view],
+     $           zone_frags)
+            call add_zone_frags(view,zone_frags)
+
+         end do
+      end do
+
+      num=nx_apd*ny_apd
+      var=de_var_unknown
+      tab_index=0
+      var_min=zero
+      var_max=zero
+      mult=zero
+      spacing=de_spacing_unknown
+      do i=1,num
+         grp_views[i]=i
+      end do
+      call de_grp_init(grp_name_apd,num,var,tab_index,var_min,var_max,
+     $     mult,spacing,grp_views)
+@#endif
+      
+      ix_max=nx
+      iy_max=ny
+      do ix=1,nx
+         do iy=1,ny
+            view=view_base+(iy-1)*nx+ix
+            call gpi_views(ix,ix_max,iy,iy_max,
+     $           vc_args(de_view_points[view][de_view_start]),
+     $           de_view_halfwidth[view],de_view_algorithm[view],
+     $           zone_frags)
+            call add_zone_frags(view,zone_frags)
+
+         end do
+      end do
+      
+      num=nx*ny
+      var=de_var_unknown
+      tab_index=0        // Recall that this is for spectrum calculation
+      var_min=zero
+      var_max=zero
+      mult=zero
+      spacing=de_spacing_unknown
+      do i=1,num
+         grp_views[i]=view_base+i
+      end do
+      call de_grp_init(grp_name,num,var,tab_index,var_min,var_max,
+     $     mult,spacing,grp_views)
+
+      var_free(zone_frags)
+
+      return
+      end
+
+@ Details of the GPI camera views.  These are separated here so that
+they can be called by a post-processing routine, separate from the
+detector class arrays.
+
+@<Functions...@>=
+      subroutine gpi_views(ix,ix_max,iy,iy_max,
+     $           vc_dummy(points),halfwidth,algorithm,zone_frags)
+      implicit_none_f77
+      zn_common
+      implicit_none_f90
+
+      integer ix,ix_max,iy,iy_max                           // Input
+      
+      integer algorithm                                    // Output         
+      real halfwidth
+      vc_decl(points[de_view_start:de_view_end])
+      real zone_frags[zn_num]
+
+      real delta_cx,delta_cy,cx,cy,a_rc,a_zc,a_ry,a_zy,    // Local
+     $     a_rx,a_zx,r_maj,z,x_p,y_p,z_p,x_p0,y_p0
+
+      assert(ix_max > 1)
+      assert(iy_max > 1)
+      delta_cx=(cx_max-cx_min)/areal(ix_max-1)
+      delta_cy=(cy_max-cy_min)/areal(iy_max-1)
+/*
+   We got from Jim the $(R, Z)$ values of the four corners of the 
+   target plane.  The plane itself is defined as $\phi = $ constant.
+   So, we only need to create the mapping from |cx| and |cy| to
+   $R$ and $Z$ to get what we need.  It looks like the simplest
+   procedure of using the |cx| = 0 and |cy| = 0 points to
+   determine the mapping coefficients does a fine job.  Here is
+   the result:
+*/
+      a_rc=bl_r
+      a_zc=bl_z
+      a_ry=(tl_r-bl_r)/cy_max
+      a_zy=(tl_z-bl_z)/cy_max
+      a_rx=(br_r-bl_r)/cx_max
+      a_zx=(br_z-bl_z)/cx_max
+/*
+   Scale coordinates to the current resolution
+*/
+      cx=cx_min+areal(ix-1)*delta_cx
+      cy=cy_min+areal(iy-1)*delta_cy
+/*
+   Apply the mapping from pixel coordinates to $R$ and $Z$
+*/
+      r_maj=a_rx*cx+a_ry*cy+a_rc
+      z=a_zx*cx+a_zy*cy+a_zc
+/*
+   Place in the target plane
+*/
+      x_p=r_maj*cos(phi_tp)
+      y_p=r_maj*sin(phi_tp)
+      z_p=z
+/*
+   Likewise compute the camera coordinates
+*/
+      x_p0=r_p0*cos(phi_p0)
+      y_p0=r_p0*sin(phi_p0)
+
+      algorithm=de_algorithm_circular
+      halfwidth=view_width 
+      vc_set(points[de_view_start],x_p0,y_p0,z_p0)
+      vc_set(points[de_view_end],x_p,y_p,z_p)
+      call detector_view_setup(vc_args(points[de_view_start]),halfwidth,
+     $     algorithm,zone_frags)
+
+      return
+      end
+
+@ Specification of the APD views.  Have set this up to mirror |gpi_views|, 
+but do not anticipate calling via |postdetector|. Nor do we anticipate
+calling with a reduced number of views.
+
+@<Functions...@>=
+@#if (VIEW == MID)
+      subroutine apd_views(ix,ix_max,iy,iy_max,
+     $           vc_dummy(points),halfwidth,algorithm,zone_frags)
+      implicit_none_f77
+      zn_common
+      implicit_none_f90
+
+      integer ix,ix_max,iy,iy_max                           // Input
+      
+      integer algorithm                                    // Output         
+      real halfwidth
+      vc_decl(points[de_view_start:de_view_end])
+      real zone_frags[zn_num]
+
+      real x_p,y_p,z_p,x_pc,y_pc,z_pc
+      real r_apd_tp(nx_apd),z_apd_tp(ny_apd)
+      integer i
+
+      data (r_apd_tp(i),i=1,nx_apd) 
+     $     /dconst(0.8858), dconst(0.8898), dconst(0.8936),
+     $      dconst(0.8970), dconst(0.9009), dconst(0.9049),
+     $      dconst(0.9090), dconst(0.9129), dconst(0.9167)/
+      data (z_apd_tp(i),i=1,ny_apd)
+     $     /dconst(-1.4,-2), dconst(-1.80,-2), dconst(-2.20,-2),
+     $      dconst(-2.58,-2), dconst(-2.96,-2), dconst(-3.36,-2),
+     $      dconst(-3.73,-2), dconst(-4.09,-2), dconst(-4.49,-2),
+     $      dconst(-4.86,-2)/
+
+      assert(ix_max == nx_apd)
+      assert(iy_max == ny_apd)
+/* 
+   Place in the target plane
+*/
+      x_p=r_apd_tp(ix)*cos(phi_apd_tp)
+      y_p=r_apd_tp(ix)*sin(phi_apd_tp)
+      z_p=z_apd_tp(iy)
+/*
+  Camera coordinates 
+*/
+      x_pc=r_apd*cos(phi_apd)
+      y_pc=r_apd*sin(phi_apd)
+      z_pc=z_apd
+
+      algorithm=de_algorithm_circular
+      halfwidth=view_width_apd 
+      vc_set(points[de_view_start],x_pc,y_pc,z_pc)
+      vc_set(points[de_view_end],x_p,y_p,z_p)
+      call detector_view_setup(vc_args(points[de_view_start]),halfwidth,
+     $     algorithm,zone_frags)
+
+      return
+      end
+@#endif
+
+@* INDEX.

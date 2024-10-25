@@ -1,0 +1,301 @@
+% $Id: 88203decb95ed7b9568266032ff5ef2e5a69e953 $
+\Title{reactionsetup}
+
+
+@* Routines used to set up the reactions file.
+
+\ID{$Id: 88203decb95ed7b9568266032ff5ef2e5a69e953 $}
+
+The file \verb+reaction_infile+ identified in the \verb+degas2.in+
+file describes all of the reactions available in
+DEGAS 2. Each reaction is represented by four separate lines:
+
+\begin{enumerate}
+\item The full name of the reaction
+\item A blank delimited sequence of entries like
+\begin{verbatim}
+reagent1 + reagent2 -> product1 + product2 + ...
+\end{verbatim}
+where reagent1, product1, etc. are species symbols.
+Currently only binary reactions are supported. Most reactions involve
+one background reagent and one test reagent. This ordering is now enforced
+by |problemsetup|. Reactions between two background species 
+(e.g., recombination) are also permitted provided at least one of the
+products is a test species. Such reactions are treated as sources.
+\item The path name (relative or absolute) of the netCDF data file
+providing the reaction rate and collision handling data for this reaction.
+\item The reaction type. This is used to group reactions which are sufficiently
+similar that their products and collisions can be processed using the
+same code. Currently recognized types include
+\begin{description}
+\item[chargex] charge exchange
+\item[elastic] ion - neutral elastic scattering
+\item[dissoc] Molecular dissociation and dissociative ionization
+\item[dissoc\_rec] Molecular dissociative recombination
+\item[ionize] Ionization
+\item[ionize\_suppress] Ionization handled with the technique of suppressed
+absorption.
+\item[recombination] Recombination; is actually a source of neutral test 
+species.
+\end{description}
+\end{enumerate}
+
+Here are some example reactions:
+
+\begin{verbatim}
+electron impact ionization of hydrogen
+hionize	e + H *  -> e + H+ + e 
+../data/hionize.nc
+ionize_suppress
+
+electron recombination of hydrogen 
+hrecombine e + H+ -> H *
+../data/hrecombine.nc
+recombination
+
+hydrogen charge exchange
+hchex	H+ + H -> H + H+
+../data/hchex.nc
+chargex
+
+molecular hydrogen dissociation
+h2dis e + H2 -> e + H + H
+../data/h2dis.nc
+dissoc
+\end{verbatim}
+
+Again, this input file is read by |datasetup|, 
+translated into DEGAS 2 data, and written into a netCDF file. The
+corresponding symbolic name in \verb+degas2.in+ is \verb+reactionfile+.
+
+Note that adding a new reaction to this file involves two tasks beyond 
+inserting the appropriate lines in \verb+reaction_infile+. First, the 
+netCDF file for the atomic physics data must be generated.
+The second task would be to write subroutines for setting up the products and
+handling collisions.
+This would be necessary only if a new reaction type
+were being added.
+
+All of the entries in the above example file are considered 
+generic reactions. That is, each reaction specified is available for
+all isotopically equivalent reagents and products. 
+The code handles automatically the various isotopic possibilities. 
+Reactions which should apply to only specific species (e.g., ion-neutral
+elastic scattering) can be identified by replacing the ``\verb+->+''
+symbol with ``\verb+=>+''.
+
+@m FILE 'reactionsetup.web'
+
+@I macros.hweb
+@I readfilenames.hweb
+@I reaction.hweb
+@I species.hweb
+@I sysdep.hweb
+@I string.hweb
+@I netcdf.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Read in data from \verb+reactions_infile+.
+
+@<Functions...@>=
+      subroutine read_reactions
+      implicit_none_f77
+      rc_common                   // Common
+      sp_common
+      rf_common
+      implicit_none_f90
+      integer length,p,b,e,i      // Local
+      character*LINELEN line
+      character*FILELEN file
+      character*FILELEN tempfile
+      character*rc_type_len type
+      @<Memory allocation interface@>
+      st_decls
+      rc_num=0
+@#if 0
+      rd_table_size=0
+@#endif
+      reaction_version='unknown'
+
+      tempfile = filenames_array[reaction_infile]
+      assert(tempfile != char_undef)
+      open(unit=diskin,file=tempfile,
+     $     form='formatted',status='old')
+      assert( read_string(diskin,line,length) )
+      assert(length<=len(line))
+      reaction_version=line(:length)
+loop1: continue
+      if (! read_string(diskin,line,length) ) goto eof
+/*
+   Add next reaction
+*/
+      rc_num=rc_num+1
+      var_realloca(reaction_name)
+      var_realloca(reaction_sy)
+      var_realloca(reaction_emitter)
+      var_realloca(reaction_reagent_num)
+      var_realloca(reaction_generic)
+      var_realloca(reaction_product_num)
+      var_realloca(reaction_reagent)
+      var_realloca(reaction_product)
+      var_realloca(reaction_type)
+      var_realloca(reaction_filename)
+
+/*
+   First line contains the full name of the reaction
+*/
+      length=parse_string(line(:length))
+      reaction_name[rc_num]=line(:length)
+
+      assert(read_string(diskin,line,length))
+      length=parse_string(line(:length))
+/*
+   Count and identify reagent species
+*/      
+      p=0
+      assert( next_token(line,b,e,p) )
+      rc_sy(rc_num)=read_text(line(b:e))
+      rc_reagent_num(rc_num) = 0
+      rc_emitter(rc_num) = 0
+loop2: continue
+      rc_reagent_num(rc_num) = rc_reagent_num(rc_num) + 1
+      assert( rc_reagent_num(rc_num) <= rc_reagent_max )
+      assert( next_token(line,b,e,p) )
+      rc_reagent(rc_num,rc_reagent_num(rc_num)) = sp_lookup(line(b:e))
+      assert( next_token(line,b,e,p) )
+      if (line(b:e) == '*') then
+         assert(rc_emitter(rc_num) == 0)
+         rc_emitter(rc_num) = -rc_reagent_num(rc_num)
+         assert( next_token(line,b,e,p) )
+      end if         
+      if (line(b:e) == '+') then
+         goto loop2
+      else if (line(b:e) == '->') then
+         rc_gen(rc_num)=rc_generic_yes          // Use generic species
+      else if (line(b:e) == '=>') then
+         rc_gen(rc_num)=rc_generic_no           // Specific species
+      else
+         assert('Invalid token' == ' ')
+      end if
+/*
+   Count and identify product species
+*/      
+      rc_product_num(rc_num) = 0
+loop3: continue
+      rc_product_num(rc_num) = rc_product_num(rc_num) + 1
+      assert( rc_product_num(rc_num) <= rc_product_max )
+      assert( next_token(line,b,e,p) )
+      rc_product(rc_num,rc_product_num(rc_num)) = sp_lookup(line(b:e))
+      if ( next_token(line,b,e,p) ) then
+         if ( line(b:e) == '*' ) then
+            assert(rc_emitter(rc_num) == 0)
+            rc_emitter(rc_num) = rc_product_num(rc_num)
+            if ( next_token(line,b,e,p) ) then
+               assert( line(b:e) == '+' )
+               goto loop3
+            end if
+         else
+            assert( line(b:e) == '+' )
+            goto loop3
+         end if
+      end if
+      if (rc_product_num(rc_num) < rc_product_max) then
+         do i=rc_product_num(rc_num)+1,rc_product_max
+            rc_product(rc_num,i)=int_unused
+         end do
+      end if
+/*
+   Third line contains the path name for the data file
+*/
+      assert( read_string(diskin,file,length) )
+      assert(length<=len(file))
+      
+      rc_filename(rc_num)=file
+
+/*
+  Fourth line gets the reaction type
+*/
+      assert( read_string(diskin,type,length) )
+      assert(length<=len(type))
+      rc_reaction_type(rc_num)=type
+
+
+/*
+   Get next reaction
+*/
+      goto loop1
+eof:  continue
+      close(unit=diskin)
+      var_reallocb(reaction_name)
+      var_reallocb(reaction_sy)
+      var_reallocb(reaction_emitter)
+      var_reallocb(reaction_reagent_num)
+      var_reallocb(reaction_generic)
+      var_reallocb(reaction_product_num)
+      var_reallocb(reaction_reagent)
+      var_reallocb(reaction_product)
+      var_reallocb(reaction_type)
+      var_reallocb(reaction_filename)
+
+      return
+      end
+
+
+@ Write out data into netcdf file \verb+reactions.nc+
+      
+@<Functions...@>=
+      subroutine nc_write_reaction
+      implicit_none_f77
+      rc_common                   // Common
+      rf_common
+      implicit_none_f90
+      integer fileid
+      rc_ncdecl
+      nc_decls
+      st_decls
+      character*LINELEN description,program_version
+      character*FILELEN tempfile      //local
+
+      program_version=
+     $     'DEGAS 2 Git commit: $Format:%H$, ref names: $Format:%d$'
+
+      tempfile = filenames_array[reactionfile]
+      assert(tempfile != char_undef)
+      fileid = nccreate(tempfile,NC_CLOBBER,nc_stat)
+
+      description = 'Data for reaction in degas 2'
+      call ncattputc(fileid,NC_GLOBAL,'description',NC_CHAR,
+     $     string_length(description),
+     $     description,nc_stat)
+
+      call ncattputc(fileid,NC_GLOBAL,'data_version',NC_CHAR,
+     $     string_length(reaction_version),
+     $     reaction_version,nc_stat)
+      
+      call ncattputc(fileid,NC_GLOBAL,'program_version',NC_CHAR,
+     $     string_length(program_version),
+     $     program_version,nc_stat)
+      
+      rc_ncdef(fileid)
+      call ncendef(fileid,nc_stat)
+      rc_ncwrite(fileid)
+      call ncclose(fileid,nc_stat)
+      
+      return
+      end
+
+      
+
+
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

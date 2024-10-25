@@ -1,0 +1,60 @@
+% $Id: a5e3d3c355ea6dff9c00a38709e7c23b3adfb0b4 $
+\Title{geomfront numbers}
+
+@* Front-end routines for the geometry.
+
+
+@m FILE 'geomfront.web'
+
+@I macros.hweb
+
+@I geomint.hweb
+@I sector.hweb
+@I location.hweb
+@I particle.hweb
+
+@* Front-end routines for the geometry.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Track a particle.  Track a particle for a time |tmax| and return
+|.true.|, unless a zone boundary is encoutered in which case return |.false.|.
+
+
+@<Functions...@>=
+      function particle_track(tmax,t,pt_dummy(x))
+      implicit_none_f77
+      gi_common
+      sc_common
+      implicit_none_f90
+      logical particle_track    // Function
+      pt_decl(x)                // Input/output
+      real tmax                 // Input
+      real t                    // Output
+      lc_decl(y)
+      external track
+      logical track
+      
+      particle_track=track(pt_type(x),tmax,lc_x(pt_loc(x)),pt_v(x),
+     $     lc_cell(pt_loc(x)),t,lc_x(y),lc_cell(y),lc_face(y),lc_cell_next(y),lc_sector(y),lc_sector_next(y))
+      pt_t(x)=pt_t(x)+t
+      lc_zone(y)=cells[c_zone,lc_cell(y)]
+      if (lc_face(y) != 0) then
+         lc_zone_next(y)=cells[c_zone,lc_cell_next(y)]
+      else
+         lc_zone_next(y)=lc_zone(y)
+      end if
+      lc_copy(y,x)
+      
+      return
+      end
+
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

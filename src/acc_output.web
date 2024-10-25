@@ -1,0 +1,338 @@
+% $Id: c122bb5d8b2446e30c949b9996117e8e7f0857ba $
+\Title{acc_output}
+
+@* Accumulate data in two output files. 
+
+\ID{$Id: c122bb5d8b2446e30c949b9996117e8e7f0857ba $}
+
+The objective of this code is to obtain
+an output file that would be equivalent to a restart, but with an intervening
+change in the background.  The code structure largely follows that of |matchout|.
+
+The output file pointed to by the current |degas2.in| file will be treated as
+the increment since this code will be called in a loop over steps.  The file
+named on the command line will serve as the ``base'' file. The initial 
+call to the code will serve to propagate the data from the one in |degas2.in|
+into the ``base'' file, performing the required manipulations in the process.
+The end result should be equivalent to an average over the files.
+
+Note that this code cannot handle post-processing tallies; an assertion      
+will be thrown in this case.  The reason is that the contents of the 
+background data, which may be used in post-processing, are only known
+for one of the two files.
+
+A principal application of this code is to integrate over multiple time
+intervals.  Without any additional steps, the code will effectively average
+the output over the entire interval.
+
+@m FILE 'acc_output.web'
+
+@I macros.hweb 
+@I tally.hweb
+@I output.hweb
+@I netcdf.hweb
+@I sysdep.hweb
+@I readfilenames.hweb
+@I string.hweb
+
+@ The main program
+
+@a
+      program acc_output
+
+      implicit_none_f77
+      implicit_none_f90
+      integer nargs
+      character*FILELEN file2
+
+      st_decls
+      sy_decls
+
+      call readfilenames
+
+      call degas_init
+      call nc_read_output
+
+      nargs=arg_count()
+      call command_arg(1,file2)
+      assert(nargs == 1)
+      call combine_data(file2)
+
+      stop
+      end
+
+      @<Functions and Subroutines@>
+
+@ Combine data in two output files. The procedure used is analogous to
+the one in the main |do_flights_master|.
+
+@<Functions...@>=
+      subroutine combine_data(file2)
+
+      define_varp(one_all,FLOAT,output_moments_ind,output_tab_ind)
+      define_varp(one_grp,FLOAT,output_moments_ind,output_tab_ind,output_grps_ind)
+      define_varp(one_post_all,FLOAT,output_moments_ind,output_tab_ind)
+      define_varp(one_post_grp,FLOAT,output_moments_ind,output_tab_ind,output_grps_ind)
+      define_varp(one_weight_grp,FLOAT,output_grps_ind)
+
+      implicit_none_f77
+      pr_common
+      so_common
+      tl_common
+      ou_common
+      rf_common
+      implicit_none_f90
+
+      character*FILELEN file2                           // Input
+
+      integer i,is,pr_reac,jscore,fileid,file_type      // Local
+      real prob,avg_part_per_sec,b_wt,inc_wt,
+     $     tot_wt,ma
+      logical need_scores
+      character*LINELEN description,program_version
+      character*FILELEN org_file
+
+      nc_decls
+      st_decls
+      ou_ncdecl
+
+      @<Memory allocation interface@>
+
+      declare_varp(one_all)
+      declare_varp(one_grp)
+      declare_varp(one_post_all)
+      declare_varp(one_post_grp)
+      declare_varp(one_weight_grp)
+
+      var_alloc(one_all)
+      var_alloc(one_grp)
+      var_alloc(one_post_all)
+      var_alloc(one_post_grp)
+      var_alloc(one_weight_grp)
+
+      assert(output_old_file == TRUE)
+      do i=0,tally_size-1
+         one_all[i][o_mean]=output_all[i][o_mean]
+         one_all[i][o_var]=output_all[i][o_var]
+         one_post_all[i][o_mean]=out_post_all[i][o_mean]
+         one_post_all[i][o_var]=out_post_all[i][o_var]
+      end do
+
+      do is=1,so_grps
+         do i=0,tally_size-1
+            prob=so_scale(is)*so_tot_curr(is)
+            one_grp[is][i][o_mean]=output_grp[is][i][o_mean]*prob
+            one_grp[is][i][o_var]=output_grp[is][i][o_var]*prob**2
+            one_post_grp[is][i][o_mean]=out_post_grp[is][i][o_mean]
+            one_post_grp[is][i][o_var]=out_post_grp[is][i][o_var] 
+         end do
+         one_weight_grp[is]=output_weight_grp[is]
+      end do
+/*
+   Explicitly free these since they will all be reallocated when the
+   second file is read in (although the arrays had better be the same size!).
+*/
+      var_free(output_all)
+      var_free(output_grp)
+      var_free(out_post_all)
+      var_free(out_post_grp)
+      var_free(output_2D_coupling)
+      var_free(output_weight_grp)
+      var_free(output_num_flights)
+      var_free(output_random_seed)
+
+      org_file=filenames_array[outputfile]
+      filenames_array[outputfile]=file2
+      call nc_read_output
+
+      if (output_old_file == FALSE) then
+/*         
+   Initial call with just one file.  Prepare base file
+   for subsequent increments.  These steps are designed
+   to be similar to the initial output processing in 
+   |do_flights_master|.  The main difference is that we
+   do not carry the total current here since it cancels
+   out in the end and would require additional effort to
+   to compile.
+*/
+         
+         var_alloc(output_all)
+         var_alloc(output_grp)
+         var_alloc(out_post_all)
+         var_alloc(out_post_grp)
+         var_alloc(output_2D_coupling)
+         var_alloc(output_weight_grp)
+         var_alloc(output_num_flights)
+         var_alloc(output_random_seed)
+         do i=0,tally_size-1
+            output_all[i][o_mean]=zero
+            output_all[i][o_var]=zero
+         end do
+
+         do is=1,so_grps
+            do i=0,tally_size-1
+               output_grp[is][i][o_mean]=one_grp[is][i][o_mean]
+               output_grp[is][i][o_var]=one_grp[is][i][o_var]
+            end do
+            output_weight_grp[is]=one_weight_grp[is]
+         end do
+      else
+/*
+   Subsequent calls increment the above arrays and then perform
+   the remaining processing steps.  In this case, the ``one''
+   arrays represent the incremental data, and the familiar,
+   ``output'' arrays are the base data, to which the incremental
+   data will be added.
+*/
+         do i=0,tally_size-1
+            output_all[i][o_mean]=zero
+            output_all[i][o_var]=zero
+         end do
+
+         do is=1,so_grps
+            b_wt=output_weight_grp[is]
+            inc_wt=one_weight_grp[is]
+            tot_wt=b_wt+inc_wt
+            do i=0,tally_size-1
+/*
+   These expressions are intended to track those in |stat_acc|
+   as closely as possible and are equivalent to the action
+   of the ``Merge results'' macro in |doflights.web|.
+*/               
+               ma=output_grp[is][i][o_mean]
+     $              +(one_grp[is][i][o_mean]-output_grp[is][i][o_mean])*inc_wt/tot_wt
+
+               output_grp[is][i][o_var]=
+     $              b_wt*output_grp[is][i][o_var]
+     $              +inc_wt*one_grp[is][i][o_var]
+     $              +(one_grp[is][i][o_mean]-output_grp[is][i][o_mean])
+     $              *(one_grp[is][i][o_mean]-ma)*inc_wt
+               if (tot_wt > zero && output_grp[is][i][o_var] > zero) then
+                  output_grp[is][i][o_var]=output_grp[is][i][o_var]/tot_wt
+               else
+                  output_grp[is][i][o_var]=zero
+               end if
+               output_grp[is][i][o_mean]=ma
+            end do
+            output_weight_grp[is]=tot_wt
+         end do
+/*
+   This is the equivalent of the first of the two post-processing 
+   loops in |do_flights_master|.  This one is nearly trivial,
+   however, due to implicit cancellation of the total current
+   factors.
+*/
+         do is=1,so_grps
+            do i=0,tally_size-1
+               out_post_grp[is][i][o_mean]=output_grp[is][i][o_mean]
+               output_all[i][o_mean]+=out_post_grp[is][i][o_mean]      // Tentative
+               if (output_weight_grp[is] > zero) then
+                  out_post_grp[is][i][o_var]=output_grp[is][i][o_var]
+     $                 /(output_weight_grp[is]-one)
+               else
+                  out_post_grp[is][i][o_var]=zero
+               end if
+               output_all[i][o_var]+=out_post_grp[is][i][o_var]        // Tentative
+            end do
+         end do
+/*
+   And the second set of loops.  Again, this is simpler
+   than the one in |do_flights_master|.
+*/
+         if (so_time_dependent == TRUE) then
+            avg_part_per_sec=one/(so_time_final-so_time_initial)
+         else
+            avg_part_per_sec=one
+         end if
+         do i=0,tally_size-1
+            output_all[i][o_var]=sqrt(output_all[i][o_var])/max(abs(output_all[i][o_mean]),const(1.0,-100))
+            output_all[i][o_mean]*=avg_part_per_sec
+            do is=1,so_grps
+               out_post_grp[is][i][o_var]=sqrt(out_post_grp[is][i][o_var])/max(abs(out_post_grp[is][i][o_mean]),const(1.0,-100))
+               out_post_grp[is][i][o_mean]*=avg_part_per_sec
+            end do
+         end do
+
+         need_scores=.false.
+         do i=1,tally_type_num[tl_type_reaction]
+            do pr_reac=1,pr_reaction_num+so_type_num
+               jscore=tally_type_base[tl_type_reaction]+i-1
+               if (tally_est_reaction[jscore][tl_est_post_process][pr_reac] 
+     $              > zero) then
+                  need_scores=.true.
+               end if
+            end do
+         end do
+         assert(!need_scores)
+
+         do is=1,so_grps
+            call final_conversions(tl_cv_post,out_post_grp[is][0][o_mean])
+            call final_conversions(tl_cv_output,out_post_grp[is][0][o_mean])
+            do i=0,tally_size-1
+               if (is == 1) then
+                  out_post_all[i][o_mean]=out_post_grp[is][i][o_mean]
+                  out_post_all[i][o_var]=output_all[i][o_var]
+               else
+                  out_post_all[i][o_mean]+=out_post_grp[is][i][o_mean]
+               end if
+            end do
+         end do       // is
+      end if
+/*
+   Before writing the file, need to determine what kind of 
+   netCDF file it is so that the new one will be of the same
+   type.  Note that we do not need to be careful in opening 
+   the file since it has been opened once already.  For older
+   versions of netCDF, only have the classic type.
+*/
+@#if defined(NETCDFV2)
+      fileid=nccreate(filenames_array[outputfile],NC_CLOBBER,nc_stat)
+@#else
+      fileid=ncopen(org_file,NC_NOWRITE,nc_stat)
+      nc_stat=nf_inq_format(fileid,file_type)
+      call ncclose(fileid,nc_stat)
+      if ((file_type == NF_64BIT_OFFSET) 
+     $     || (file_type == NF_NETCDF4)) then
+         fileid=nccreate(filenames_array[outputfile],or(NC_CLOBBER,file_type),nc_stat)
+      else 
+         fileid=nccreate(filenames_array[outputfile],NC_CLOBBER,nc_stat)
+      endif
+@#endif      
+      program_version=
+     $     'DEGAS 2 Git commit: $Format:%H$, ref names: $Format:%d$'
+      description=
+     $     'Combined output from DEGAS 2; NOT a standard output file'
+
+      call ncattputc(fileid,NC_GLOBAL,'description',NC_CHAR,
+     $     string_length(description),
+     $     description,nc_stat)
+
+      call ncattputc(fileid,NC_GLOBAL,'program_version',NC_CHAR,
+     $     string_length(program_version),
+     $     program_version,nc_stat)
+
+      ou_ncdef(fileid)
+      call ncendef(fileid,nc_stat)
+      ou_ncwrite(fileid)
+      call ncclose(fileid,nc_stat)
+
+      var_free(one_all)
+      var_free(one_grp)
+      var_free(one_post_all)
+      var_free(one_post_grp)
+      var_free(one_weight_grp)
+
+      var_free(output_all)
+      var_free(output_grp)
+      var_free(out_post_all)
+      var_free(out_post_grp)
+      var_free(output_2D_coupling)
+      var_free(output_weight_grp)
+      var_free(output_num_flights)
+      var_free(output_random_seed)
+
+      return
+      end
+      
+
+      

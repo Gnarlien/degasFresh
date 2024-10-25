@@ -1,0 +1,102 @@
+@* Background definitions.
+
+% $Id: 3ba0c0804946c122b363b927a90012e67c3351c4 $
+
+\ID{$Id: 3ba0c0804946c122b363b927a90012e67c3351c4 $}
+
+@I zone.hweb
+
+@ Information about background species is held in arrays in
+common blocks.  An background is identified by an integer indexing into
+these arrays.
+
+@f bk_decl integer
+
+@m bk_args(x) x
+
+@m bk_dummy(x) x
+
+@m bk_decl(x) integer x @;
+
+@m bk_copy(x,y) y=x @;
+
+@m bk_check(x) (x > 0 && x <= bk_num)
+
+@m bk_n(x,i) background_n[x,zn_pointer(i)]
+@m bk_temp(x,i) background_temp[x,zn_pointer(i)]
+@m bk_v(x,i) background_v[x,zn_pointer(i)]
+
+@m plasma_coords_cartesian 1    // |v| holds the $x$, $y$, and $z$ components.
+@m plasma_coords_cylindrical 2  // |v| holds the $R$, $\phi$, and $z$ components.
+
+@m bk_mx 150      // Dimensions for plasma code arrays
+@m bk_my 150
+@m bk_ms 11
+@m bk_xpt 2
+
+@ Move velocity from external reference plane to internal position. In cases with
+some cylindrical symmetry and in which the background velocities are assumed
+to be symmetric about the Z axis, the velocities need to be 
+explicitly transformed back and forth between the reference plane (zero
+toroidal angle, or y = 0).  The |coord| value
+|plasma_coords_cylindrical| denotes this symmetry option (somewhat unclearly).
+There may still be cases with no geometry symmetry, |geometry_symmetry_none|,
+that need this transformation, but disallow them for now with an assert.
+Note that
+with |geometry_symmetry_cylindrical| the velocities are always rotated back
+to a reference plane (zero toroidal angle) where the cartesian and cylindrical
+velocities are identical. Hence, the |coord| parameter is used only in cases
+without symmetry.
+
+@m v_ext_to_int(x,v,v_t,sym,coord) if ((sym == geometry_symmetry_cylindrical || sym == geometry_symmetry_cyl_hw || sym == geometry_symmetry_cyl_section) && (coord == plasma_coords_cylindrical) && (x[1]**2+x[2]**2 > zero)) then;
+      v_t[1]=(v[1]*x[1]-v[2]*x[2])/sqrt(x[1]**2+x[2]**2);   
+      v_t[2]=(v[1]*x[2]+v[2]*x[1])/sqrt(x[1]**2+x[2]**2);
+      v_t[3]=v[3];
+      else;
+      assert(!((sym == geometry_symmetry_none) && (coord == plasma_coords_cylindrical)));
+      vc_copy(v,v_t);
+      end if @;
+
+@ Move velocity from internal position external reference plane.
+
+@m v_int_to_ext(x,v,v_t,sym,coord) if ((sym == geometry_symmetry_cylindrical || sym == geometry_symmetry_cyl_hw || sym == geometry_symmetry_cyl_section) && (coord == plasma_coords_cylindrical) && (x[1]**2+x[2]**2 > zero)) then;
+      v_t[1]=(v[1]*x[1]+v[2]*x[2])/sqrt(x[1]**2+x[2]**2);   
+      v_t[2]=(-v[1]*x[2]+v[2]*x[1])/sqrt(x[1]**2+x[2]**2);
+      v_t[3]=v[3];
+      else;
+      assert(!((sym == geometry_symmetry_none) && (coord == plasma_coords_cylindrical)));
+      vc_copy(v,v_t);
+      end if @;
+
+@ Variable definitions.
+
+@a
+      package_init(bk)
+      define_var_pk(bk,bk_num,INT)
+      define_dimen_pk(bk,background_ind,bk_num)
+      define_dimen_pk(bk,bk_plasma_ind,zone_type_num[zn_plasma])
+      define_var_pk(bk,background_coords,INT)
+      define_varp_pk(bk,background_n,FLOAT,background_ind,bk_plasma_ind)
+      define_varp_pk(bk,background_v,FLOAT,vector,background_ind,bk_plasma_ind)
+      define_varp_pk(bk,background_temp,FLOAT,background_ind,bk_plasma_ind)
+      package_end(bk)
+
+@* Background class attribute descriptions.
+
+@ Store background properties.  Prefix is |bk|.  
+
+The identifier |background| is an
+integer variable.
+
+\begin{description}
+  \item[|bk_n(background,i)|] Is the density in the $i$th zone.
+
+  \item[|bk_v(background,i)|] Is the vector velocity in the $i$th zone.
+
+  \item[|bk_temp(background,i)|] Is the temperature in the $i$th zone.
+
+  \item[|background_coords|] Specifies the coordinate system used to 
+represent |bk_v|, either |plasma_coords_cartesian| or 
+|plasma_coords_cylindrical|.
+\end{description}
+

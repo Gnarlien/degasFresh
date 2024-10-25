@@ -1,0 +1,1487 @@
+% $Id: 6e32127b76f2d4f9e8dd7cd492a25afb0c253929 $
+\Title{degas2_xgc}
+
+@* These routines establish a subroutine based coupling between
+DEGAS 2 and the XGC-0 neoclassical plasma transport codem as well as
+provide an interface to DEGAS 2's atomic physics data.  Note that
+there is a fair bit of hardwired code here, e.g., regarding species.
+
+\ID{$Id: 6e32127b76f2d4f9e8dd7cd492a25afb0c253929 $}
+
+@m FILE 'degas2_xgc.web'
+
+@I macros.hweb
+@I sysdep.hweb
+@I random.hweb
+@I zone.hweb
+@I species.hweb
+@I background.hweb
+@I reaction.hweb
+@I problem.hweb
+@I sources.hweb
+@I tally.hweb
+@I mpi.hweb
+@I vector.hweb
+@I output.hweb
+@I string.hweb
+@I reactiondata.hweb
+@I xsection.hweb
+@I degas2_xgc.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@* Initialization routine
+
+@<Functions...@>=
+      subroutine degas2_xgc_init(comm_world,root,sml_totalpe,sml_mype,
+     $                           num_xgc_segs,xgc_bdy_r,xgc_bdy_z,
+     $                           xgc_e_bin_num,xgc_e_bin_spacing,
+     $                           xgc_e_bin_min,xgc_e_bin_delta,
+     $                           back_num,test_num,rn_dummy(x))
+
+      implicit_none_f77
+      mp_common                                               // Common
+      dx_common
+      so_common
+      sc_common
+      pr_common
+      implicit_none_f90
+     
+      integer root,sml_totalpe,sml_mype,num_xgc_segs,         // Input
+     $        xgc_e_bin_num,xgc_e_bin_spacing, comm_world
+      real xgc_e_bin_min,xgc_e_bin_delta
+      real xgc_bdy_r[num_xgc_segs],xgc_bdy_z[num_xgc_segs]
+
+      integer back_num,test_num                               // Output
+      rn_decl(x)
+
+      integer i,j,plasma_sc,igrp,iseg,standalone,iparam       // Local
+      real slop
+      sc_decl(sector)
+      sc_plasma_decl(plasma_sc_ptr)
+      vc_decl(x1)
+      vc_decl(x2)
+      rn_seed_decl(seed)
+      rn_decls
+
+      external sloppy_lookup_sector
+      integer sloppy_lookup_sector
+
+      mp_decls
+      @<Memory allocation interface@>
+
+@#if MPI
+      mpi_degas2_root=root       
+      mpi_size=sml_totalpe
+      mpi_rank=sml_mype
+      standalone=FALSE
+      call degas2_mpi_init(standalone,comm_world)
+@#else
+/* 
+   Want something stronger than the usual |assert| since the novice user
+   may type ``go'' anyway and since the assertions get skipped
+   if the code is compiled without debugging on.
+*/
+      if (sml_totalpe != 1) then
+         write(stderr,*) ' DEGAS 2 not compiled with MPI on'
+         stop
+      end if
+@#endif
+      if (mpi_master) call readfilenames
+
+/*
+   At the moment, reading the background primarily to set the
+   source data.  The plasma data will be overwritten with each
+   call to |xgc_flighttest|.
+*/
+      call degas_init
+/*
+   Set up map between XGC0 boundary segments and the DEGAS 2 
+   source segments read in from the background netCDF file.
+   These should be the same segments, but the relative ordering
+   is not known a priori.  
+
+   The coordinates in the DG file only have seven digits of
+   precision.  Created and use here |sloppy_lookup_sector| 
+   to do the matching.
+*/
+      dx_num_src_segments=num_xgc_segs
+      var_alloc(dx_source_segments)
+      var_alloc(dx_xgc_segment)
+      do i=1,num_xgc_segs
+         dx_source_segments[i]=int_uninit
+         dx_xgc_segment[i]=int_uninit
+      end do
+      slop=const(1.,-5)
+      do i=1,num_xgc_segs
+         if (i < num_xgc_segs) then
+            vc_set(x1,xgc_bdy_r[i],zero,xgc_bdy_z[i])
+            vc_set(x2,xgc_bdy_r[i+1],zero,xgc_bdy_z[i+1])
+         else
+            vc_set(x1,xgc_bdy_r[i],zero,xgc_bdy_z[i])
+            vc_set(x2,xgc_bdy_r[1],zero,xgc_bdy_z[1])
+         end if
+         sector=sloppy_lookup_sector(x1,x2,slop)
+         if (sc_check(sector)) then
+            plasma_sc_ptr=sector_type_pointer[sector][sc_plasma]
+            if (sc_plasma_check(plasma_sc_ptr)) then
+               plasma_sc=TRUE
+            else
+               plasma_sc=FALSE
+            end if
+         else
+            plasma_sc=FALSE
+         end if
+         if (plasma_sc == FALSE) then
+            sector=sloppy_lookup_sector(x2,x1,slop)
+            assert(sc_check(sector))
+            plasma_sc_ptr=sector_type_pointer[sector][sc_plasma]
+            assert(sc_plasma_check(plasma_sc_ptr))
+            plasma_sc=TRUE
+         end if
+         assert(plasma_sc == TRUE)
+         igrp=1
+         do iseg=1,so_seg_tot
+            if (iseg >= so_base(igrp)+so_nseg(igrp)) then
+               igrp++
+            end if
+/*
+  Check the type here in case we have sources other than plate.
+  Am assuming that all plate source segments are coming from XGC0.
+  The assertions double-check uniqueness; required because of the
+  use of |sloppy_lookup_sector|.
+*/
+            if (((so_type(igrp) == so_plate) 
+     $             || (so_type(igrp) == so_plt_e_bins))
+     $          && (source_segment_ptr[iseg] == sector)) then
+               dx_source_segments[i]=iseg
+               assert(dx_xgc_segment[iseg] == int_uninit)
+               dx_xgc_segment[iseg]=i
+               if (i > 1) then
+                  do j=1,i-1
+                     assert(dx_source_segments[j] != iseg)
+                  end do
+               end if
+            end if
+         end do
+      end do
+/*
+   Set parameters for energy binned plate source.  This assumes
+   source description read in from the background netCDF file 
+   already contains an initial set of parameters for this source
+   group.  The only restriction is that the number of bins used
+   there be at least as many as are used here.  The ``minimum''
+   and ``delta'' values are assumed to be computed in the same
+   manner by both codes so that these can be copied over directly.
+*/
+      do igrp=1,so_grps
+         if (so_type(igrp) == so_plt_e_bins) then
+            assert(source_num_giparameters[igrp] > 0)
+            do iparam=1,source_num_giparameters[igrp]
+               if (so_giparams_list(iparam,igrp) == so_giparam_e_bins_num) then
+                  assert(so_giparams_data(iparam,igrp) >= xgc_e_bin_num)
+                  so_giparams_data(iparam,igrp)=xgc_e_bin_num
+                  dx_e_bin_num=xgc_e_bin_num
+               else if (so_giparams_list(iparam,igrp) == so_giparam_e_bins_spacing) then
+                  assert((xgc_e_bin_spacing == so_e_bins_spacing_linear)
+     $                 || (xgc_e_bin_spacing == so_e_bins_spacing_log))
+                  so_giparams_data(iparam,igrp)=xgc_e_bin_spacing
+               end if
+            end do
+            assert(source_num_gparameters[igrp] > 0)
+            do iparam=1,source_num_gparameters[igrp]
+               if (so_gparams_list(iparam,igrp) == so_gparam_e_bins_min) then
+                  if (xgc_e_bin_spacing == so_e_bins_spacing_linear) then
+                     assert(xgc_e_bin_min > zero)
+                  end if
+                  so_gparams_data(iparam,igrp)=xgc_e_bin_min
+               else if (so_gparams_list(iparam,igrp) == so_gparam_e_bins_delta) then
+                  assert(xgc_e_bin_delta > zero)
+                  so_gparams_data(iparam,igrp)=xgc_e_bin_delta
+               end if
+            end do
+         end if
+      end do
+
+      back_num=pr_background_num
+      test_num=pr_test_num
+/*
+   Initialize random number sequence to be used in processing
+   XGC0 collisions.
+*/
+      call string_to_seed('XGC0 seed',seed)
+      call next_seed(sml_mype,seed)         // Each processor has its own sequence.
+      call random_init_d2(seed,rn_args(x))
+
+      return
+      end
+
+@* Controlling subroutine for DEGAS 2 neutral transport calculation.
+
+@m mass_change 1          // Must match corresponding lists in XGC's module.F90
+@m momentum_change_1 2
+@m momentum_change_2 3
+@m momentum_change_3 4
+@m energy_change 5
+@m max_change 5
+
+@<Functions...@>=
+      subroutine xgc_flighttest(nflights,ntriangle,get_source,num_source_sp,
+     $                          test_num,min_xgc_sp,max_xgc_sp,
+     $                          d2_bk_species,neu_np,neu_vp,neu_tp,
+     $                          neu_hload_weight,neu_hload_en_bins,
+     $                          t_init,t_final,
+     $                          neu_n0,neu_v0,neu_t0,neu_source,
+     $                          neu_total_source)
+
+      implicit_none_f77
+      zn_common
+      pr_common
+      bk_common
+      so_common
+      mp_common
+      sp_common
+      tl_common
+      ou_common
+      dx_common
+      implicit_none_f90
+
+      integer nflights,ntriangle,get_source,num_source_sp,          // Input
+     $        test_num,min_xgc_sp,max_xgc_sp
+      integer d2_bk_species[min_xgc_sp:max_xgc_sp]
+
+      real neu_np[ntriangle][min_xgc_sp:max_xgc_sp],
+     $     neu_vp[ntriangle][min_xgc_sp:max_xgc_sp][3],
+     $     neu_tp[ntriangle][min_xgc_sp:max_xgc_sp],
+     $     neu_hload_weight[dx_num_src_segments],
+     $     neu_hload_en_bins[dx_num_src_segments][dx_e_bin_num]
+
+      real t_init,t_final
+
+      real neu_n0[ntriangle][test_num],                   // Output
+     $     neu_v0[ntriangle][test_num][3],
+     $     neu_t0[ntriangle][test_num],
+     $     neu_source[ntriangle][num_source_sp][max_change],
+     $     neu_total_source[num_source_sp][max_change]
+
+      integer zone,have_pressure,test,                    // Local
+     $        x_sp,iseg,iterative,igrp,prob_sp,
+     $        ibin,iparam,standalone
+      integer index_parameters[tl_index_max]
+      real density,pressure,edrift,temperature,ei,
+     $     sigma_v_ion,sigma_v_cx
+      bk_decl(back_elec)
+      bk_decl(back)
+      rn_seed_decl(io_seed)
+      vc_decl(vel_test)
+
+      real extract_output_datum                           // External
+      external extract_output_datum
+
+      @<Memory allocation interface@>
+      mp_decls
+      rn_decls
+      st_decls
+      zn_decls
+
+      back_elec=pr_background_lookup(sp_lookup('e'))
+      assert(bk_check(back_elec))
+/*
+   Copy all of the XGC0 plasma parameters into
+   the background arrays.
+*/
+      do x_sp=min_xgc_sp,max_xgc_sp
+         back=d2_bk_species[x_sp]
+         assert(bk_check(back))
+         do zone=1,ntriangle
+            assert(zn_check(zone))
+            bk_n(back,zone)=neu_np[zone][x_sp]
+            vc_copy(neu_vp[zone][x_sp],bk_v(back,zone))
+            bk_temp(back,zone)=neu_tp[zone][x_sp]
+         end do
+      end do
+/*
+   Set source data based on the XGC0 losses to the walls.
+*/
+      igrp=1
+      so_tot_curr(igrp)=zero
+      assert(source_num_parameters[igrp] > 0)   // For binned energy distribution
+      do iseg=1,so_seg_tot
+         if (iseg >= so_base(igrp)+so_nseg(igrp)) then
+            igrp++
+            so_tot_curr(igrp)=zero
+         end if
+         if (so_type(igrp) == so_plt_e_bins) then
+            source_current[iseg]=neu_hload_weight[dx_xgc_segment[iseg]]
+            so_tot_curr(igrp)+=source_current[iseg]
+/*
+   Set binned energy distribution at each segment.
+   Note that we are allowing the number of bins actually
+   used by XGC0 to be less than that specified in the
+   miscellaneous source parameters read in from the background
+   netCDF file, hence the additional if-then-else here.
+*/
+            ibin=0
+            do iparam=1,source_num_parameters[igrp]
+               if (so_params_list(iparam,igrp) 
+     $              == so_param_e_bin_prob) then
+                  ibin++
+                  if (ibin <= dx_e_bin_num) then
+                     so_params_data(iparam,iseg,igrp)
+     $                    =neu_hload_en_bins[dx_xgc_segment[iseg]][ibin]
+                  else
+                     so_params_data(iparam,iseg,igrp)=one
+                  end if
+               end if
+            end do
+            assert(ibin >= dx_e_bin_num)
+         else if (so_type(igrp) != so_recomb) then
+/*
+   May eventually allow for other source types.  Would need to modify
+   this section to do so.
+*/
+            assert(so_type(igrp) == so_snapshot)
+            so_time_initial=t_init
+            so_time_final=t_final
+            assert(so_time_dependent == TRUE)
+            standalone=FALSE
+            call set_snapshot_source(standalone)
+         end if
+      end do
+
+/*
+   Should do an intelligent setting of all |so_nflights| here.
+   In the absence of that, do the simplest thing to override the
+   default setting for the number of snapshot flights.
+*/
+      do igrp=1,so_grps
+         so_nflights(igrp)=nflights
+         if (so_type(igrp) == so_snapshot) then
+            assert(igrp != 1)
+            so_nflights(igrp)=so_nflights(1)
+         end if
+      end do
+      iterative=FALSE
+      call init_wt_alias(iterative)
+
+      if (mpi_master) then
+         call write_background
+         call decimal_to_seed(so_seed_decimal,rn_seed_args(io_seed))
+      end if
+
+      if (mpi_master) then
+         call do_flights_master(io_seed)
+/*
+   Need to manage seeds out here so that consecutive BGK iterations
+   start with different seeds and are, thus, uncorrelated.
+*/
+         call next_seed(1,rn_seed_args(io_seed))
+      else
+         call do_flights_slave
+      end if
+/*
+   Fill output arrays.  This is patterned after |bgk_test|.
+*/
+      if (mpi_master) then
+         if (string_lookup('neutral pressure',tally_name,tl_num) > 0) then
+            have_pressure=TRUE
+         else
+            have_pressure=FALSE   // Not kept with minimal set of scores
+         end if
+         do prob_sp=1,pr_background_num+pr_test_num
+            if (prob_sp <= pr_background_num) then
+               assert(pr_background_check(prob_sp))
+            else
+               test=prob_sp-pr_background_num
+               assert(pr_test_check(test))
+               index_parameters[tl_index_test]=test
+            end if
+            index_parameters[tl_index_problem_sp]=prob_sp
+/*
+   Could get this by summing |neu_source|, but want this available
+   for rescaling in XGC0 even if |get_source| is turned off.  Only 
+   tallying |mass_change| at the moment, but could easily add the others.
+*/
+            neu_total_source[prob_sp][mass_change]
+     $          =extract_output_datum(index_parameters,1,out_post_all,o_mean,
+     $           'total ion source rate')
+            neu_total_source[prob_sp][momentum_change_1]=zero
+            neu_total_source[prob_sp][momentum_change_2]=zero
+            neu_total_source[prob_sp][momentum_change_3]=zero
+            neu_total_source[prob_sp][energy_change]=zero
+            do zone=1,zn_num
+               if (zone_type[zone] == zn_plasma) then
+                  index_parameters[tl_index_zone]=zone
+                  if (prob_sp > pr_background_num+1) then   // Skip ``0'' species
+                     density=extract_output_datum(index_parameters,1,
+     $                    out_post_all,o_mean,'neutral density')
+                     if (have_pressure == TRUE) then
+                        pressure=extract_output_datum(index_parameters,1,
+     $                       out_post_all,o_mean,'neutral pressure')
+                     else
+                        pressure=zero
+                     end if
+                     vel_test[1]=extract_output_datum(index_parameters,1,
+     $                    out_post_all,o_mean,'neutral flux vector')
+                     vel_test[2]=extract_output_datum(index_parameters,2,
+     $                    out_post_all,o_mean,'neutral flux vector')
+                     vel_test[3]=extract_output_datum(index_parameters,3,
+     $                    out_post_all,o_mean,'neutral flux vector')
+                     if (density != zero) then
+                        vc_scale(one/density,vel_test,vel_test)
+/*
+   Subtract drift energy from total energy to get temperature. 
+   In the case of single flights, these are equal, and we have to
+   allow for small or even negative temperatures.
+*/
+                        edrift=half*sp_m(pr_test(test))*vc_abs2(vel_test)
+                        temperature=(pressure/density) - edrift/const(1.5)
+                        if (temperature < const(-1.,-30)) then
+                           write(stderr,*) ' temperature = ',temperature,' at zone = ',zone
+                           write(stderr,*) ' pressure = ',pressure,', density = ',density
+                           write(stderr,*) ' vel_test = ',vel_test
+                           write(stderr,*) ' t_init = ',t_init
+                        end if
+                        if (temperature <= const(1.,-30)) temperature=const(1.,-30)
+                     else
+                        density=const(1.,-30)
+                        temperature=const(1.,-30)
+                     end if
+                     neu_n0[zone][test]=density
+                     vc_copy(vel_test,neu_v0[zone][test])
+                     neu_t0[zone][test]=temperature       // still in J
+                  end if                                  // test species
+                  if (get_source == 1) then
+                     neu_source[zone][prob_sp][mass_change]
+     $                    =extract_output_datum(index_parameters,1,
+     $                    out_post_all,o_mean,'ion source rate')
+                     neu_source[zone][prob_sp][momentum_change_1]
+     $                    =extract_output_datum(index_parameters,1,
+     $                    out_post_all,o_mean,'ion momentum source vector')
+                     neu_source[zone][prob_sp][momentum_change_2]
+     $                    =extract_output_datum(index_parameters,2,
+     $                    out_post_all,o_mean,'ion momentum source vector')
+                     neu_source[zone][prob_sp][momentum_change_3]
+     $                    =extract_output_datum(index_parameters,3,
+     $                    out_post_all,o_mean,'ion momentum source vector')
+                     neu_source[zone][prob_sp][energy_change]
+     $                    =extract_output_datum(index_parameters,1,
+     $                    out_post_all,o_mean,'ion energy source')
+                  end if                                 // |get_source|
+               end if                                    // |zone| if
+            end do                                       // |zone| do
+         end do                                          // |prob_sp|
+      end if                                             // |mpi_master|
+@#if MPI
+      call MPI_bcast(neu_n0,ntriangle*test_num,mpi_real,mpi_degas2_root,
+     $               comm_world_dup,mpi_err)
+      call MPI_bcast(neu_v0,3*ntriangle*test_num,mpi_real,mpi_degas2_root,
+     $               comm_world_dup,mpi_err)
+      call MPI_bcast(neu_t0,ntriangle*test_num,mpi_real,mpi_degas2_root,
+     $               comm_world_dup,mpi_err)
+      call MPI_bcast(neu_total_source,(num_source_sp)*max_change,mpi_real,
+     $               mpi_degas2_root,comm_world_dup,mpi_err)
+      if (get_source == 1)
+     $     call MPI_bcast(neu_source,ntriangle*(num_source_sp)*max_change,mpi_real,
+     $                    mpi_degas2_root,comm_world_dup,mpi_err)
+@#endif
+/*
+   The output and snapshot arrays are reallocated on every call
+   to |do_flights_master|.  This call will free the memory 
+   used in this iteration so that it doesn't get tied up
+   indefinitely.  This call mirrors the one inside the BGK loop
+   in |bgk_flighttest|.
+*/
+      if (mpi_master) then
+         call clear_output
+      end if
+
+      return
+      end
+
+@* Subroutine to set up mapping between XGC0 and DEGAS2 problem species. Also
+passes back data on reaction reagents and products.
+
+@<Functions...@>=
+      subroutine degas2_sp_reac_map(min_xgc_sp,max_xgc_sp,min_source_sp,max_source_sp,
+     $                              reaction_max,mass,charge,d2_bk_species,
+     $                              xgc0_sp_type,source_sp_symbol,num_reactions,
+     $                              reaction_list,reaction_d2_ts,
+     $                              num_precursors,d2_ts_precursors)
+
+      implicit_none_f77
+      pr_common
+      bk_common
+      sp_common
+      rc_common
+      implicit_none_f90
+
+      integer min_xgc_sp,max_xgc_sp,min_source_sp,max_source_sp,reaction_max // Input
+      real mass[min_xgc_sp:max_xgc_sp],charge[min_xgc_sp:max_xgc_sp]       
+      integer d2_bk_species[min_xgc_sp:max_xgc_sp],                          // Output
+     $     xgc0_sp_type[*],num_reactions[min_xgc_sp:max_xgc_sp],
+     $     reaction_list[min_xgc_sp:max_xgc_sp][reaction_max],
+     $     reaction_d2_ts[min_xgc_sp:max_xgc_sp][reaction_max],
+     $     num_precursors[min_xgc_sp:max_xgc_sp],
+     $     d2_ts_precursors[min_xgc_sp:max_xgc_sp][reaction_max]
+
+      character*(*) source_sp_symbol[min_source_sp:max_source_sp]
+      integer x_sp,ts_reac,pr_reac,i,px_sp,add_test,prob_sp                  // Local
+      real mass_roundoff,charge_roundoff
+      pr_background_decl(back)
+      pr_background_decl(back_i)
+      pr_test_decl(test)
+      pr_reaction_decl(reac)
+
+      integer int_lookup                                                     // External
+      external int_lookup 
+
+/*
+   The variation here is likely to be just the non-integral fraction of the atomic
+      weight. Picking something arbitary for now.
+*/ 
+      mass_roundoff=const(1.,-1)*atomic_mass_unit
+      charge_roundoff=epsilon
+      do x_sp=min_xgc_sp,max_xgc_sp
+         d2_bk_species[x_sp]=int_uninit
+         do back=1,pr_background_num
+/*
+   Since electron mass in XGC0 is treated as a free
+   parameter, rely solely on the charge to identify
+   when the input species is ``electron''.
+*/
+            if ((sp_z(pr_background(back)) < 0) && (charge[x_sp] < zero)) then
+               d2_bk_species[x_sp]=back
+               assert(mass[x_sp] < mass_roundoff)
+               goto break
+            else if ((abs(sp_m(pr_background(back))-mass[x_sp]) < mass_roundoff)
+     $          && (abs(sp_z(pr_background(back))-charge[x_sp]) < charge_roundoff)) then
+               d2_bk_species[x_sp]=back
+               goto break
+            end if
+         end do
+break:   continue
+         assert(d2_bk_species[x_sp] != int_uninit)
+         xgc0_sp_type[d2_bk_species[x_sp]]=x_sp
+         num_precursors[x_sp]=0
+      end do
+
+      do prob_sp=1,pr_background_num+pr_test_num
+         if (prob_sp <= pr_background_num) then
+            assert(pr_background_check(prob_sp))
+            source_sp_symbol[prob_sp]=sp_sy(pr_background(prob_sp))
+         else
+            test=prob_sp-pr_background_num
+            assert(pr_test_check(test))
+            source_sp_symbol[prob_sp]=sp_sy(pr_test(test))
+         end if
+      end do
+/*
+   Set up reaction information. Note: finishing the above loop first so
+   that we can use |d2_bk_species| below in mapping the products.
+*/
+      do x_sp=min_xgc_sp,max_xgc_sp
+         num_reactions[x_sp]=0
+         do test=1,pr_test_num
+            if (pr_rc_num(test) > 0) then
+               do ts_reac=1,pr_rc_num(test)
+                  if (pr_ts_bk(test,ts_reac) == d2_bk_species[x_sp]) then
+                     num_reactions[x_sp]++
+/*
+   This is the problem reaction number:
+*/
+                     reaction_list[x_sp][num_reactions[x_sp]]=ts_reac 
+                     reaction_d2_ts[x_sp][num_reactions[x_sp]]=test
+/*
+   XGC0 not set up to handle multiple isotopes, so be sure
+   things are simple on this side as well.
+*/
+                     assert(pr_num_arrangements(test,ts_reac) == 1)
+                     pr_reac=pr_ts_rc(test,ts_reac)
+                     do i=1,rc_product_num(pr_reaction(pr_reac))
+                        back_i=pr_background_lookup(pr_ts_prod(test,ts_reac,1,i))
+                        do px_sp=min_xgc_sp,max_xgc_sp
+                           if (back_i == d2_bk_species[px_sp]) then
+/*
+   Explicitly broke this up to avoid calling |int_lookup| with
+   |num_precursors| = 0.
+*/
+                              add_test=FALSE
+                              if (num_precursors[px_sp] == 0) then
+                                 add_test=TRUE
+                              else if (int_lookup(test,d2_ts_precursors[px_sp][1],
+     $                                 num_precursors[px_sp]) == 0) then
+                                 add_test=TRUE
+                              end if
+                              if (add_test == TRUE) then
+                                 num_precursors[px_sp]++
+                                 d2_ts_precursors[px_sp][num_precursors[px_sp]]=test
+                              end if  // |add_test|
+                           end if     // |back_i|
+                        end do        // |px_sp|
+                     end do           // |i|
+                  end if              // |pr_ts_bk|
+               end do                 // |ts_reac|
+            end if                    // |pr_rc_num|
+         end do                       // |test|
+         assert(num_reactions[x_sp] > 0)
+      end do                          // |x_sp|
+
+      return
+      end
+
+@* Revised routine for reaction data for use in XGC0.
+Because this application has plasma ions and electrons colliding 
+off a neutral background, the notions of ``test'' and ``background'' 
+are the opposite of what they are in DEGAS 2.  Since we need to use 
+the DEGAS 2 interpretations (as specified in the problem input file)
+to access the reaction data, opportunities for confusion arise. The
+first step towards dealing with this is to use the labels
+|d2| and |xgc| to refer to the native kinetic species for the
+two codes.  Then, use |d2_bk| to explicitly denote a DEGAS 2 problem
+background number, and likewise |d2_ts| refers to a DEGAS 2
+problem test number.
+
+Begin dealing with this by explicitly describing input parameters:
+\begin{description}
+  \item[|min_xgc0_sp_type|] Needed to set the dimensions and indices of
+|d2_bk_species|.
+  \item[|max_xgc0_sp_type|] Needed to set the dimensions and indices of
+|d2_bk_species|.
+  \item[|d2_bk_species|] The mapping between the XGC0 and DEGAS 2's 
+usual ``background'' species; needed for setting up the |product_rate|
+array.
+  \item[|i_d2_bk|] The DEGAS 2 ``background'' index corresponding to
+the reacting XGC0 species.
+  \item[|n_xgc0|] The density of the reacting XGC0 species.  This is really
+only needed to specify the electron density for the evaluation of collisional
+radiative rates based on electron impact.
+  \item[|T_xgc0|] The temperature of the reacting XGC0 species.  This is really
+only needed to specify the electron temperature for the evaluation of collisional
+radiative rates based on electron impact.
+  \item[|v_xgc0|] The instantaneous velocity of the reacting XGC0 particle.  The
+primary need for this is in evaluating charge exchange / elastic scattering rates
+that depend on velocity of both reacting species.
+  \item[|i_d2_ts|] The DEGAS 2 ``test'' species corresponding to reacting 
+neutral for the current reaction.
+  \item[|n_d2|] Local density of |i_d2_ts|.
+  \item[|vf_d2|] Local flow velocity of |i_d2_ts|.
+  \item[|T_d2|] Local temperature of |i_d2_ts|.
+  \item[|ts_reac|] Index into the list of reactions in which |i_d2_ts|
+participates, according to the specification in DEGAS 2's ``problem'' class.
+  \item[|rate|] The computed rate of |ts_reac| (output).
+  \item[|product_rate|] Array indexed by XGC0 species that provides the rate 
+at which they are generated in this reaction; e.g., would be twice |rate| for
+an electron impact ionization rate (output).
+\end{description}
+
+@<Functions...@>=
+      subroutine degas2_reaction_data(min_xgc0_sp_type,max_xgc0_sp_type,
+     $                                d2_bk_species,
+     $                                i_d2_bk,n_xgc0,T_xgc0,v_xgc0,
+     $                                i_d2_ts,n_d2,vf_d2,T_d2,ts_reac,
+     $                                rate,product_rate)
+
+      implicit_none_f77
+      rc_common
+      sp_common
+      pr_common
+      rd_common
+      implicit_none_f90
+
+      integer min_xgc0_sp_type,max_xgc0_sp_type,ts_reac      // Input
+      integer d2_bk_species[min_xgc0_sp_type:max_xgc0_sp_type]
+      real n_xgc0,T_xgc0,n_d2,T_d2              
+      pr_background_decl(i_d2_bk)
+      pr_test_decl(i_d2_ts)
+      vc_decl(v_xgc0)
+      vc_decl(vf_d2)
+
+      real rate                                      // Output
+      real product_rate[min_xgc0_sp_type:max_xgc0_sp_type]   
+
+      integer i,px_sp                                 // Local 
+      real test_mass,back_mass,T_back
+      real independent_parameters[xs_max_indep_params]
+      pr_reaction_decl(pr_reac)
+      rn_decl(tag)
+
+      st_decls
+
+      external eval_data                             // External
+      real eval_data
+
+      test_mass=sp_m(pr_background(i_d2_bk))
+/*
+   The interpretation of ``test'' and ``background'' gets further
+   muddied by the fact that we are not treating the atomic physics
+   of electrons (tracked or virtual) in a kinetic fashion.  I.e.,
+   instead of computing cross sections as a function of the velocity
+   of the current electron relative to that of a (perhaps sampled)
+   neutral, we are evaluating a Maxwellian averaged rate at the 
+   electron temperature in the current zone.  The argument one can
+   make is that because the electron velocity is much greater than
+   that of the (background) neutral, the velocity of the latter does
+   not enter into the integration of the cross section over the electron 
+   distribution.  Consequently, the sum of the cross section over all
+   electrons in the zone will yield essentially the same result as
+   just computing the rate at the local electron temperature.
+   Note: not sure if we should be using the electron mass for
+   |xs_var_m_back| as well.
+*/
+      if (i_d2_bk == pr_background_lookup(sp_lookup('e'))) then
+         back_mass=sp_m(pr_background(i_d2_bk))
+         T_back=T_xgc0
+      else
+         back_mass=sp_m(pr_test(i_d2_ts))
+         T_back=T_d2
+      end if
+/*
+   When using this routine in processing reactions, need to be
+   more careful in setting the ``test'' and ``back'' velocities.
+   Here, just using the settings appropriate for charge exchange
+   in which the XGC0 species acts like a test species and the
+   neutral species is the background.
+*/
+      call set_indep_params_xgc0(test_mass,v_xgc0,back_mass,
+     $     n_xgc0,vf_d2,T_back,independent_parameters)
+/*
+  Get reaction rate
+*/
+      pr_reac=pr_ts_rc(i_d2_ts,ts_reac)
+      assert(reaction_rate_num_rand[pr_reac] == 0)
+/*
+   NOTE: now multiplying background density here (for the moment) rather than in
+   calling routine.
+*/
+      rate=n_d2*eval_data(rd_data_args(reaction_rate,[pr_reac]),
+     $     independent_parameters,rn_args(tag))
+      do px_sp=min_xgc0_sp_type,max_xgc0_sp_type
+         product_rate[px_sp]=zero
+      end do
+      do i=1,rc_product_num(pr_reaction(pr_reac))
+/*
+   Starting out with these limits in the argument list.
+   If needed elsewhere, could put them in a common block
+   here.  Note that they would then need to be different
+   variables from those on the XGC0 side.
+*/
+         do px_sp=min_xgc0_sp_type,max_xgc0_sp_type   
+            if (pr_ts_prod(i_d2_ts,ts_reac,1,i) 
+     $               == pr_background(d2_bk_species[px_sp])) then
+               product_rate[px_sp]+=rate
+            end if
+         end do
+      end do
+
+      return
+      end
+
+@* Process XGC0 reactions. Argument list is similar to that of |degas2_reaction_data|.
+
+If we keep using the energy based approach for setting product velocities, should 
+get this from a data file:
+
+@m E_ionize const(1.3595,1)*electron_charge
+
+@<Functions...@>=
+      subroutine process_xgc0_reactions(min_xgc0_sp_type,max_xgc0_sp_type,
+     $                                  d2_bk_species,
+     $                                  i_d2_bk,n_xgc0,T_xgc0,v_xgc0,E_xgc0,
+     $                                  i_d2_ts,n_d2,vf_d2,T_d2,ts_reac,rate,
+     $                                  nprod,prod_xgc0,vc_dummy(v_prod),E_prod,
+     $                                  scoring_data,
+     $                                  rn_dummy(x))
+
+      implicit_none_f77
+      rc_common
+      sp_common
+      pr_common
+      implicit_none_f90
+
+      integer min_xgc0_sp_type,max_xgc0_sp_type                 // Input
+      integer d2_bk_species[min_xgc0_sp_type:max_xgc0_sp_type]
+      real n_xgc0,T_xgc0,E_xgc0,n_d2,T_d2,rate              
+      pr_background_decl(i_d2_bk)
+      pr_test_decl(i_d2_ts)
+      pr_reaction_decl(ts_reac)
+      vc_decl(v_xgc0)
+      vc_decl(vf_d2)
+
+      integer nprod                                            // Output
+      integer prod_xgc0[rc_product_max]
+      real E_prod[rc_product_max],scoring_data[scoring_data_max]
+      vc_decl(v_prod[rc_product_max])
+  
+      rn_decl(x)                                               // Input / Output
+
+      real test_mass,back_mass,T_back,v_thermal,               // Local
+     $     tmp_data,E_th,E_max
+      real independent_parameters[xs_max_indep_params],
+     $     w_prod[rc_product_max]
+      integer i,px_sp,psp_ts,psp_bk,icv
+      pr_reaction_decl(pr_reac) 
+      pr_test_decl(d2_ts_prod)
+      pr_background_decl(d2_bk_prod)
+      vc_decl(v_test)
+      vc_decl(vb_therm)
+      sp_decl(prod[rc_product_max])
+      sp_decl(tmp_sp)
+      
+      pr_reac=pr_ts_rc(i_d2_ts,ts_reac)
+      do i=1,rc_product_max
+         E_prod[i]=zero
+      end do
+      do i=1,scoring_data_max
+         scoring_data[i]=zero
+      end do
+/*
+   The structure of this if-then-else clause is intended to resemble
+   that in |pick_reaction|.  The difference is that we need to
+   use the separation into specific reaction types to implement
+   hacks for each type that address the peculiarities described
+   above.
+*/
+      if (rc_reaction_type(pr_reaction(pr_reac)) == 'chargex') then
+         test_mass=sp_m(pr_background(i_d2_bk))
+         back_mass=sp_m(pr_test(i_d2_ts))     // As in |degas2_reaction_data|
+         T_back=T_d2
+         vc_copy(v_xgc0,v_test)
+/*
+   Expect these parameters to be used in subroutine |chargex|:
+   |v_test| $\rightarrow$ |xs_var_v_test|, |vf_d2| $\rightarrow$ |xs_var_v_flow|,
+   |T_back|, |back_mass| $\rightarrow$ |xs_var_sp_temperature|, 
+   |test_mass| $\rightarrow$ |xs_var_m_test|.
+*/
+         call set_indep_params_xgc0(test_mass,v_test,back_mass,n_xgc0,
+     $        vf_d2,T_back,independent_parameters)
+         call chargex(pr_test_args(i_d2_ts),pr_reaction_args(ts_reac),
+     $     rate,independent_parameters,
+     $     nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $     scoring_data,rn_args(x))
+
+         d2_ts_prod=pr_test_lookup(prod[1])
+         if (pr_test_check(d2_ts_prod)) then
+            d2_bk_prod=pr_background_lookup(prod[2])
+         else
+            d2_ts_prod=pr_test_lookup(prod[2])
+            d2_bk_prod=pr_background_lookup(prod[1])
+         end if
+         psp_ts=pr_problem_sp_test(d2_ts_prod)
+         psp_bk=pr_problem_sp_back(d2_bk_prod)
+/*
+   The way we are using |chargex| here, the ``test'' species is an
+   XGC0 ion.  Consequently, when we return to the calling routine,
+   we want the velocity of the ``test'' product to be associated
+   with the ion product.  Of course, this is the opposite of the
+   usual product ordering.  It's easiest to just swap the product
+   labels.
+*/
+         assert(nprod == 2)
+         tmp_sp=prod[1]
+         prod[1]=prod[2]
+         prod[2]=tmp_sp
+/*
+   Ditto for the entries in |scoring_data|.
+*/
+         do icv=pr_var_mass_change,pr_var_energy_change
+            tmp_data=(test_mass/back_mass)*scoring_data[pr_var_problem_sp_index(icv,psp_ts)]
+            scoring_data[pr_var_problem_sp_index(icv,psp_ts)]
+     $           =(back_mass/test_mass)*scoring_data[pr_var_problem_sp_index(icv,psp_bk)]
+            scoring_data[pr_var_problem_sp_index(icv,psp_bk)]=tmp_data
+         end do
+/*
+   These are all electron impact reactions so that the background
+   temperature is actually that of the XGC0 species, i.e., the
+   electron.
+*/
+      else if ((rc_reaction_type(pr_reaction(pr_reac)) == 'ionize') 
+     $        || (rc_reaction_type(pr_reaction(pr_reac)) == 'ionize_suppress')
+     $        || (rc_reaction_type(pr_reaction(pr_reac)) == 'dissoc')
+     $        || (rc_reaction_type(pr_reaction(pr_reac)) == 'dissoc_rec')) then
+         test_mass=sp_m(pr_test(i_d2_ts))
+         back_mass=sp_m(pr_background(i_d2_bk))
+         T_back=T_xgc0
+         v_thermal=sqrt(T_d2/test_mass)
+         call random_gauss(vb_therm,3,rn_args(x))
+         vc_scale(v_thermal,vb_therm,v_test)
+         vc_add(v_test,vf_d2,v_test)
+/*
+   Expect these parameters to be used in subroutines |ionize| and |dissoc|:
+   |v_test| $\rightarrow$ |xs_var_v_test|, |n_xgc0| $\rightarrow$ |xs_var_density| 
+*/
+         call set_indep_params_xgc0(test_mass,v_test,back_mass,n_xgc0,
+     $        vf_d2,T_back,independent_parameters)
+         
+         if ((rc_reaction_type(pr_reaction(pr_reac)) == 'ionize') 
+     $        || (rc_reaction_type(pr_reaction(pr_reac)) == 'ionize_suppress')) then
+            call ionize(pr_test_args(i_d2_ts),pr_reaction_args(ts_reac),
+     $           rate,independent_parameters,
+     $           nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $           scoring_data,rn_args(x))
+         else if ((rc_reaction_type(pr_reaction(pr_reac)) == 'dissoc')
+     $           || (rc_reaction_type(pr_reaction(pr_reac)) == 'dissoc_rec')) then
+            call dissoc(pr_test_args(i_d2_ts),pr_reaction_args(ts_reac),
+     $           rate,independent_parameters,
+     $           nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $           scoring_data,rn_args(x))
+         end if
+/*
+   Could conceivably insert this information into the netCDF data file for 
+   each reaction.  But, as seen below, it is not always a single number.
+*/
+         if (rc_sy(pr_reaction(pr_reac)) == 'hionize') then
+            E_th=const(1.3595,1)*electron_charge
+            E_max=E_th/const(4.)
+         else if (rc_sy(pr_reaction(pr_reac)) == 'h2ion') then
+            E_th=const(1.54,1)*electron_charge
+            E_max=E_th/const(4.)
+         else if (rc_sy(pr_reaction(pr_reac)) == 'h2pdision') then
+            E_th=const(1.47,1)*electron_charge
+            E_max=E_th/const(4.)
+         else if (rc_sy(pr_reaction(pr_reac)) == 'h2dision') then
+/*
+   This reaction has two intermediate molecular states, each with 
+   a different threshold.
+*/
+            E_th=const(2.6,1)*electron_charge
+            E_max=const(3.7)*electron_charge
+            if (E_xgc0 < E_th) then
+               E_th=const(1.8,1)*electron_charge
+               E_max=const(4.)*electron_charge
+            end if
+         else if ((rc_sy(pr_reaction(pr_reac)) == 'h2dis')
+     $           || (rc_sy(pr_reaction(pr_reac)) == 'h2pdis')
+     $           ||  (rc_sy(pr_reaction(pr_reac)) == 'h2pdisrec')) then
+            E_th=zero   // Not used
+            E_max=zero  // Zero or one electron
+         end if
+         call set_electron_energies(nprod,sp_args(prod),scoring_data,rate,
+     $                              i_d2_bk,n_xgc0,E_xgc0,n_d2,E_th,E_max,E_prod)
+      else
+         assert('Unsupported reaction type' == ' ')
+      end if
+
+      do i=1,nprod
+/*
+   Initialize this to an |sp_type| that doesn't exist so we can
+   identify non-XGC0 products on return.
+*/
+         prod_xgc0[i]=min_xgc0_sp_type-1
+         do px_sp=min_xgc0_sp_type,max_xgc0_sp_type
+            if (prod[i] == pr_background(d2_bk_species[px_sp])) then
+               prod_xgc0[i]=px_sp
+            end if
+         end do
+      end do
+
+      return
+      end
+
+@* Routine for setting the energies of product electrons.
+
+@m E_2min const(1.0)
+
+@<Functions...@>=
+      subroutine set_electron_energies(nprod,sp_dummy(prod),scoring_data,rate,
+     $                                 i_d2_bk,n_xgc0,E_xgc0,n_d2,E_th,E_max,E_prod)
+     $    
+
+      implicit_none_f77
+      sp_common
+      pr_common
+      implicit_none_f90
+
+      integer nprod                                            // Input
+      real rate,n_xgc0,E_xgc0,n_d2,E_th,E_max  
+      real scoring_data[scoring_data_max]
+      pr_background_decl(i_d2_bk)
+      sp_decl(prod[rc_product_max])
+
+      real E_prod[rc_product_max]                              // Output
+
+      integer i,i_first,i_second                               // Local  
+      real E_loss,E_2,E_prod_tot
+      logical first_electron
+/*
+   The collision processing routines do not set velocities for the product
+   electrons.  Implement here a procedure patterned after the
+   one employed in the original XGC0 neutral model that has the
+   ionizing electron retain its pitch.  Its energy is rescaled to
+   account for the electron cooling and the energy of the new
+   electron.  All we do here is compute the required product energies;
+   the remaining manipulations are performed by the calling routine.
+
+   Convert the electron energy loss rate into an energy.
+   Note that in the call to |set_indep_params_xgc0| preceding
+   the computation of |scoring_data|, the ``background'' density
+   was set to be the XGC0 (electron) density to allow collisional
+   radiative rates to be evaulated correctly.  But, for this process
+   the DEGAS 2 species is actually the background.  Hence, the
+   density ratio factor here.
+*/
+      E_loss=-n_d2*scoring_data[pr_var_problem_sp_index(pr_var_energy_change,pr_problem_sp_back(i_d2_bk))]
+     $  /(n_xgc0*rate)
+      E_prod_tot=zero
+
+      first_electron=.true.
+      do i=1,nprod
+         if (sp_sy(prod[i]) == 'e') then
+            if (first_electron) then
+/*
+   The reduced energy of the reacting electron is determined from this
+   and the energy of the second electron, which is based on
+   the prescription spelled out in Janev, Langer, Evans, and
+   Post (2.1.5).  That prescription specifies a maximum energy of
+   |E_th|/4.  However, one reaction deviates from this; we make
+   |E_max| an input to allow for it.
+
+   This procedure also works for cases with just one (or even zero)
+   electron if one sets |E_max| $= 0$.
+*/
+               E_2=min(half*(E_xgc0-E_th),E_max)
+/*
+   Since the reaction is not handled kinetically, the reacting
+   electron might actually have an energy less than |E_th|.
+   Set a minimum of |E_2min| for the new electron and $1 \%$ for the
+   reacting electron.  Use an explicit if here since |E_2| $ = 0$
+   is legitimate for single electron reactions.
+*/
+               if (E_2 < zero) E_2=E_2min*electron_charge
+               E_prod[i]=(E_xgc0-E_loss-E_2)
+               E_prod[i]=max(E_prod[i],const(1.,-2)*E_xgc0)
+               E_prod_tot=E_prod[i]
+               first_electron=.false.
+               i_first=i
+            else
+               E_prod[i]=E_2
+               E_prod_tot+=E_prod[i]
+               i_second=i
+            end if
+         end if
+      end do
+/*
+   Because of the enforced minima on the new electron
+   energies, the actual cooling rate may differ from
+   the one that's in |scoring_data|.  Recompute here
+   to ensure conservation.  Note that from this point on,
+   it's only used for diagnostic purposes, so we don't
+   worry about it being negative.  The test on |E_prod_tot|
+   handles the case in which there are no product electrons
+   (dissociative recombination), so that the only effect
+   of this routine is to apply the density ratio factor.
+
+   Note that we do not divide out the n_d2/n_xgc0 factor
+   divided out above so that the resulting scoring_data is
+   per electron rather than per neutral; the final scores
+   will include the statistical weight of the electron.
+*/
+      if (E_prod_tot != zero) E_loss=E_xgc0-E_prod_tot
+      scoring_data[pr_var_problem_sp_index(pr_var_energy_change,pr_problem_sp_back(i_d2_bk))]
+     $     =-rate*E_loss
+
+      return
+      end
+
+@* Routine for setting the independent parameters for use with XGC0.
+
+@<Functions...@>=
+      subroutine set_indep_params_xgc0(test_mass,v_test,back_mass,
+     $           n_back,vf_back,T_back,independent_parameters)
+
+      implicit_none_f77
+      pr_common
+      implicit_none_f90
+
+      real test_mass,back_mass,n_back,T_back               // Input           
+      vc_decl(v_test)
+      vc_decl(vf_back)
+
+      real independent_parameters[xs_max_indep_params]   // Output
+
+      integer i                                          // Local
+      vc_decl(vrel)
+
+      do i=1,xs_max_indep_params
+         independent_parameters[i]=zero
+      end do
+      independent_parameters[xs_var_density]=n_back
+      vc_difference(v_test,vf_back,vrel)
+      independent_parameters[xs_var_energy]=half*test_mass*vc_abs2(vrel)
+      independent_parameters[xs_var_temperature]=T_back
+      independent_parameters[xs_var_sp_energy]=half*vc_abs2(vrel)
+      independent_parameters[xs_var_sp_temperature]=T_back/back_mass
+      independent_parameters[xs_var_zone]=0 
+      independent_parameters[xs_var_v_test_1]=v_test[1]
+      independent_parameters[xs_var_v_test_2]=v_test[2]
+      independent_parameters[xs_var_v_test_3]=v_test[3]
+      independent_parameters[xs_var_v_flow_1]=vf_back[1]
+      independent_parameters[xs_var_v_flow_2]=vf_back[2]
+      independent_parameters[xs_var_v_flow_3]=vf_back[3]
+      independent_parameters[xs_var_m_test]=test_mass
+      independent_parameters[xs_var_m_back]=back_mass
+/*
+   These quantities are frequently used for log interpolation
+   and should always be non-zero.
+*/
+      assert(independent_parameters[xs_var_density] > zero)
+      assert(independent_parameters[xs_var_energy] > zero)
+      assert(independent_parameters[xs_var_temperature] > zero)
+      assert(independent_parameters[xs_var_sp_energy] > zero)
+      assert(independent_parameters[xs_var_sp_temperature] > zero)
+
+      return
+      end
+
+@* Look up DEGAS 2 reaction data for use in XGC.  This routine has
+been replaced by the following |degas2_reaction_data|, but retaining
+it in this file since it may prove useful in accessing miscellaneous
+data.
+
+This has largely been 
+cribbed from |reactiontest|.  Because this application has plasma
+ions and electrons colliding off a neutral background, the notions
+of ``test'' and ``background'' are the opposite of what they are in
+DEGAS 2.  Since we need to use the DEGAS 2 interpretations (as
+specified in the problem input file) to identify reactions and
+specify data for them, opportunities for confusion arise.
+
+Begin dealing with this by explicitly describing input parameters:
+\begin{description}
+  \item[|test_label|] String appearing in the problem input file for this
+reaction that describes the neutral reagent species.
+
+  \item[|back_label|] String appearing in the problem input file for this
+reaction that describes the charged reagent species.
+
+  \item[|reaction_label|] String appearing in the problem input file 
+identifying this reaction.
+
+  \item[|var_label|] Quantity to be looked up; e.g., ``reaction_rate'',
+or ``cross_section''.
+
+  \item[|plasma_density|] The density (computed by XGC) characterizing
+the plasma species.  This is not always used; presently just the
+electron density is needed for the electron impact ionization rate.
+
+  \item[|plasma_energy|] The kinetic energy (tracked by XGC) of the
+current plasma species.  This is not always used; presently this is
+only needed for charge exchange.
+
+  \item[|temperature|] The temperature to be used in evaluating the
+reaction rate.
+\end{description}
+
+@<Functions...@>=
+      function degas2_atomic_data(test_label,back_label,reaction_label,
+     $      var_label,plasma_density,plasma_energy,temperature)
+
+      implicit_none_f77
+      sp_common
+      rc_common
+      pr_common
+      rd_common
+      implicit_none_f90
+
+      real plasma_density,plasma_energy,temperature        // Input
+      character*(*) test_label,back_label,reaction_label,
+     $              var_label
+
+      integer i,i_var,j_var
+      real vtest,energy,density,test_mass,                // Local
+     $     back_mass
+      real independent_parameters[xs_max_indep_params]
+      vc_decl(vt)
+      vc_decl(vb)
+      vc_decl(vrel)
+      sp_decl(test)
+      sp_decl(background)
+      rc_decl(reaction)
+      pr_reaction_decl(prob_react)
+      pr_background_decl(back)
+      rn_decl(tag)
+
+      external eval_data                             // External
+      real eval_data
+      real degas2_atomic_data                               // Function
+
+      rd_decls
+      st_decls
+
+     @<Memory allocation interface@>
+/*
+   Look up test, background, and reaction; then verify.
+*/
+      test=sp_lookup(test_label)
+      assert(sp_check(test))
+      assert(pr_test_check(pr_test_lookup(test))
+     $      || pr_ex_test_check(pr_ex_test_lookup(test)))
+      background=sp_lookup(back_label)
+      assert(sp_check(background))
+      assert(pr_background_check(pr_background_lookup(background)))
+      reaction=rc_lookup(reaction_label)
+      assert(rc_check(reaction))
+      prob_react=pr_reaction_lookup(reaction)
+      assert(pr_reaction_check(prob_react))
+      assert(sp_generic(test) == sp_generic(rc_reagent(reaction,2)))
+      assert(sp_generic(background) == sp_generic(rc_reagent(reaction,1)))
+/*
+   Since these are used in table interpolation, want to be sure
+   they are non-zero.
+*/
+      assert(plasma_density > zero)
+      assert(temperature > zero)
+/*
+   For charge exchange (and elastic scattering?), the identities of the
+   background and test species are the opposite of what they are
+   in the usual DEGAS 2 calculation.   To get the specific
+   energy and temperatures correct, we need to take this
+   into account.  Care should be exercised in using these in the
+   case of electron impact ionization since huge errors could arise
+   in the event of improper application.
+*/
+      test_mass=sp_m(background)
+      back_mass=sp_m(test)
+/*
+   Zero these parameters for the time being.
+*/
+      energy=zero
+      vtest=sqrt(two*plasma_energy/test_mass)
+      vc_set(vt,vtest,zero,zero)
+      vc_set(vb,zero,zero,zero)
+/*
+  The following should match subr. |set_indep_params|.
+  Note: in this context, we could get a zone number, if it proved useful.
+*/
+      do i=1,xs_max_indep_params
+         independent_parameters[i]=zero
+      end do
+      independent_parameters[xs_var_density]=plasma_density
+      vc_difference(vt,vb,vrel)
+      independent_parameters[xs_var_energy]=half*test_mass*vc_abs2(vrel)
+      independent_parameters[xs_var_temperature]=temperature
+      independent_parameters[xs_var_sp_energy]=half*vc_abs2(vrel)
+      independent_parameters[xs_var_sp_temperature]=temperature/back_mass
+      independent_parameters[xs_var_zone]=0 
+      independent_parameters[xs_var_v_test_1]=vt[1]
+      independent_parameters[xs_var_v_test_2]=vt[2]
+      independent_parameters[xs_var_v_test_3]=vt[3]
+      independent_parameters[xs_var_v_flow_1]=vb[1]
+      independent_parameters[xs_var_v_flow_2]=vb[2]
+      independent_parameters[xs_var_v_flow_3]=vb[3]
+      independent_parameters[xs_var_m_test]=test_mass
+      independent_parameters[xs_var_m_back]=back_mass
+/*
+   Skip the random number stuff for now since we do not have
+   immediate access to a random number thread.
+*/
+@#if 0
+      if (reaction_rate_num_rand[prob_react] > 0) then
+         assert(reaction_rate_num_rand[prob_react] <= xs_max_random)
+         do i=1,reaction_rate_num_rand[prob_react]
+            rn_next(rr,tag)
+            independent_parameters[xs_var_1st_random_number+i-1]=rr
+         end do
+      end if
+@#else
+      assert(reaction_rate_num_rand[prob_react] == 0)
+@#endif
+/*
+   In this context, the plasma species are colliding with a neutral
+   background.  Hence, the overall multiplier is the neutral
+   density.
+*/
+      if (var_label == 'reaction_rate') then
+         degas2_atomic_data=eval_data(rd_data_args(reaction_rate,
+     $              [prob_react]),independent_parameters,rn_args(tag))
+      else
+         i_var=string_lookup(var_label,pr_var0_list,pr_var0_num)
+         assert(i_var > 0)
+         do i=1,rd_dep_var_max
+            if (reaction_handling_var0[prob_react][i] == i_var) then
+               j_var=i
+            end if
+         end do
+         degas2_atomic_data=eval_data(rd_data_args(reaction_handling,
+     $        [prob_react][j_var]),independent_parameters,rn_args(tag))
+      end if
+
+      return
+      end
+
+@* Initialization routine for access to atomic physics data only.
+
+@<Functions...@>=
+      subroutine bd_xgc_init(root,sml_totalpe,sml_mype)
+
+      implicit_none_f77
+      mp_common                                               // Common
+      implicit_none_f90
+
+      integer root,sml_totalpe,sml_mype                       // Input
+
+      mp_decls
+      @<Memory allocation interface@>
+
+@#if MPI
+      mpi_degas2_root=root       
+      mpi_size=sml_totalpe
+      mpi_rank=sml_mype
+@#else
+/* 
+   Want something stronger than the usual |assert| since the novice user
+   may type ``go'' anyway and since the assertions get skipped
+   if the code is compiled without debugging on.
+*/
+      if (sml_totalpe != 1) then
+         write(stderr,*) ' DEGAS 2 not compiled with MPI on'
+         stop
+      end if
+@#endif
+      if (mpi_master) call readfilenames
+
+      call nc_read_elements
+      call nc_read_species
+      call nc_read_materials
+      call nc_read_pmi
+      call nc_read_reactions
+      call nc_read_problem
+
+      return
+      end
+
+@* Routine to look up labels for a species based on its mass
+and charge.  Also returns the names of the processes for which
+it is a test (or external test) reagent.
+
+@m ionization 1       // Must match list in XGC0 |d2r_module|
+@m recombination 2
+@m charge_exchange 3
+
+@<Functions...@>=
+      subroutine species_lookup(mass,charge,species_symbol,reaction_symbol,
+     $                          num_rc_types,null_reaction)
+
+      implicit_none_f77
+      sp_common
+      rc_common
+      pr_common
+      implicit_none_f90
+        
+      integer charge,num_rc_types                         // Input
+      real mass
+      character*(*) null_reaction 
+      character*sp_sy_len species_symbol                  // Output
+      character*rc_sy_len reaction_symbol[num_rc_types]
+      integer test,irct,ts_reagent,pr_reac,reac           // Local
+      real mass_roundoff
+      logical reaction_check
+      sp_decl(this_species)
+      sp_decl(species)
+/*
+      Had originally planned to use logic similar to that in |degas2_sp_reac_map|,
+      but the masses in XGC0 are too imprecise to pick directly from the 
+      species list.  Using the list of test and external test species is a 
+      renders the connections nearly trivial.
+*/
+      species_symbol=char_uninit(1:sp_sy_len)  // |char_uninit| longer than |sp_sy_len|
+      this_species=int_uninit
+      do test=1,pr_test_num+pr_ex_test_num
+         if (test <= pr_test_num) then
+            species=pr_test(test)
+         else
+            species=pr_ex_test(test-pr_test_num)
+         end if
+         mass_roundoff=const(5.,-28)
+         assert(charge >= 0)    // no electrons here
+         if ((abs(sp_m(species)-mass) < mass_roundoff)
+     $        && (sp_z(species) == charge)) then
+/*
+   This should be unique.
+*/
+            assert(species_symbol == char_uninit(1:sp_sy_len))
+            assert(this_species == int_uninit)
+            species_symbol=sp_sy(species)
+            this_species=species
+         end if
+      end do
+      assert(species_symbol != char_uninit(1:sp_sy_len))
+      assert(this_species != int_uninit)
+/*
+   Using the input |null_reaction| to initialize these      
+   reaction symbols so that the calling routine knows what 
+   to test them with to determine if they are null.
+*/
+      do irct=1,num_rc_types
+         reaction_symbol[irct]=null_reaction
+      end do
+      ts_reagent=2   // Now a standard 
+      do pr_reac=1,pr_reaction_num
+         reac=pr_reaction(pr_reac)
+         if (sp_generic(rc_reagent(reac,ts_reagent))
+     $        == sp_generic(this_species)) then
+            if ((rc_reaction_type(reac) == 'ionize')
+     $           || (rc_reaction_type(reac) == 'ionize_suppress')) then
+               assert(reaction_symbol[ionization] == null_reaction)
+               reaction_symbol[ionization]=rc_sy(reac)
+            else if (rc_reaction_type(reac) == 'recombination') then
+               assert(reaction_symbol[recombination] == null_reaction)
+               reaction_symbol[recombination]=rc_sy(reac)
+            else if (rc_reaction_type(reac) == 'chargex') then
+               assert(reaction_symbol[charge_exchange] == null_reaction)
+               reaction_symbol[charge_exchange]=rc_sy(reac)
+            end if
+         end if
+      end do
+/*      
+   Not all species will have all 3 types.  Just check to
+   see that it has at least one.
+*/
+      reaction_check=.false.
+      do irct=1,num_rc_types
+         if (reaction_symbol[irct] != null_reaction) reaction_check=.true.
+      end do
+      assert(reaction_check)
+
+      return
+      end
+
+@* Function to return index into the |scoring_data| array for 
+particular problem species and physical quantity.  The input
+|ichange| is the index used by XGC0 and runs from 1 to 5.  To
+get the more general index defined in the problem class, we
+have to add |pr_var_mass_change| - 1.
+
+@<Functions...@>=
+      function sd_entry(ichange,psp,m_psp)
+
+      implicit_none_f77
+      sp_common
+      pr_common
+      implicit_none_f90
+
+      integer sd_entry            // Function
+
+      integer ichange,psp         // Input
+
+      real m_psp                  // Output
+
+      sp_decl(psp_sp)             // Local
+
+      if (psp <= pr_background_num) then
+         psp_sp=pr_background(psp)
+      else
+         psp_sp=pr_test(psp-pr_background_num)
+      end if
+      m_psp=sp_m(psp_sp)
+
+      sd_entry=pr_var_problem_sp_index(pr_var_mass_change+ichange-1,psp)
+
+      return
+      end
+
+
+

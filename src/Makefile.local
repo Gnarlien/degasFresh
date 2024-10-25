@@ -1,0 +1,101 @@
+COMPILER=GFORTRAN
+MPI=no
+# MPI=yes
+FTANGLE=../fweb/Web/ftangle
+FWEAVE=../fweb/Web/fweave
+
+ifdef NETCDF_FORTRAN_HOME
+  NETCDF=-L$(NETCDF_FORTRAN_HOME) -lnetcdff
+endif
+
+DEBUG=yes
+FORTRAN90=yes
+
+FFLAGS=-fPIC -I`echo $(INCLUDE_PATH) | sed -e 's/:/ -I/g'` -L`echo $(LD_LIBRARY_PATH) | sed -e 's/:/ -L/g'`
+
+# gfortran 
+
+ifeq ($(COMPILER),GFORTRAN)
+  FORTRAN90=yes
+  FCF90=gfortran
+  FCMPI90=mpif90
+  NETCDF=-lnetcdff -lnetcdf
+  OPENMP=-fopenmp
+endif
+ifeq ($(compiler),INTEL)
+  FORTRAN90=yes
+  COMPILER=INTEL
+  FCF90=ifort
+  FCMPI90=mpif90
+  NETCDF=-lnetcdff -lnetcdf
+  OPENMP=-qopenmp
+endif
+
+CROSSCOMPILE=
+
+# NAG - No longer available at PPPL
+# FORTRAN90 = yes
+# COMPILER=NAGWARE
+# FCF90=mpif90
+# FCF90=f90
+
+# Portland Group - This is now the default in src/Makefile
+# FORTRAN90 = no
+# COMPILER=PGROUP
+# FCF77=pgf90
+
+# PathScale - Be sure to load modules and/or update PATH
+
+# FORTRAN90 = yes
+# COMPILER=PATHSCALE
+
+# This should be general (might want to put in the main Makefile)
+
+#FFLAGS=-I`echo $(INCLUDE_PATH) | sed -e 's/:/ -I/g'` -L`echo $(LD_LIBRARY_PATH) | sed -e 's/:/ -L/g'`
+
+# Profiling options:
+
+# PROFILE=-pg
+# PROFILE=-Mprof=func,lines
+
+# Somehow between 10/6/2014 and 10/21/2014, libcurl was no
+# longer needed and causes a can't be found error.
+# NETCDF=-lnetcdff -lnetcdf -lcurl
+NETCDF=-L/usr/local/lib -lnetcdff -lnetcdf 
+
+HDF=-ldf -ljpeg -lz
+
+# GRAPH_FILE=HDF4
+ GRAPH_FILE=SILO
+# GRAPH_FILE=SILO_HDF5
+
+# For locally installed SILO (not in a module):
+
+# SILO_ROOT=/u/dstotler/silo
+# FFLAGS+=-I$(SILO_ROOT)/include -L$(SILO_ROOT)/lib
+# HDF5_ROOT=/u/dstotler/hdf5/hdf5
+# FFLAGS+=-I$(HDF5_ROOT)/include -L$(HDF5_ROOT)/lib
+
+# TANGLEFLAGS+=-ybs6000
+
+# This is a duplicate setting; should replace in Makefile.
+
+# TANGLEFLAGS+=-yn8000 -yb200000
+
+# Following some changes to the PPPL cluster (ca. 7/2013), need
+# to specify the architecture to avoid assembler errors.  This
+# setting is for a generic 64 bit x86.  A particular value can
+# be found with the pgcpuid command.
+
+# FFLAGS+=-tp=px-64
+
+
+
+
+
+
+
+
+
+
+

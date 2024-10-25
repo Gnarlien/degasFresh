@@ -1,0 +1,497 @@
+% $Id: 1e0d91b86c93c8c4d71b3008aca2e289950c6f13 $
+\Title{reaction}
+
+@* A test program for the reaction routines. 
+
+\ID{$Id: 1e0d91b86c93c8c4d71b3008aca2e289950c6f13 $}
+
+This program can be run at
+any stage after |problemsetup|; the problem netCDF file is read. The geometry
+and background files are not needed.
+
+The user is asked to specify the symbols of the test and background 
+reagents for the reaction to be examined, as well as the symbol for the
+reaction itself. All three must appear in the current problem input file.
+External test species and reactions can be used.
+\begin{verbatim}
+ Enter symbols for test particle, background particle, reaction
+\end{verbatim}
+E.g., the user might respond with
+\begin{verbatim}
+D D+ hchex
+\end{verbatim}
+
+The code will echo the corresponding names:
+\begin{verbatim}
+      Test species is:       atomic deuterium
+      Background species is: deuterium ion
+      Reaction name is:      hydrogen charge exchange
+\end{verbatim}
+
+Next, the user needs to choose the energy of the test particle, and
+the background density and temperature:
+\begin{verbatim}
+Enter test energy, background density, temperature
+\end{verbatim}
+For example,
+\begin{verbatim}
+5. 1.e19 10.
+\end{verbatim}
+The energy and temperature are in eV; the density is in m$^{-3}$.
+
+This information is echoed by the code in the corresponding internal
+units:
+\begin{verbatim}
+    Test energy =   8.0108867E-19 J
+    Test (vx,vy,vz) =   2.1887737E+04,   0.0000000E+00,   0.0000000E+00 m/s
+    Background density =   1.0000000E+19 m**-3
+    Background temperature =   1.6021773E-18 J
+\end{verbatim}
+Note that the test velocity is assumed, without loss of generality, to be
+along the $x$ axis.
+
+The first piece of output from the code is the reaction rate,
+$n_{\rm back} \langle \sigma v \rangle$:
+\begin{verbatim}
+      => Reaction rate =   1.8638898E+05 s**(-1)
+\end{verbatim}
+If the input test and reaction are in the ``external'' list
+in the problemsetup input file, the output ends here;
+no reaction processing information is provided.
+
+Otherwise, for standard test species, 
+the product species, velocities, and weights (assuming that the
+test reagent had unit weight) follow:
+\begin{verbatim}
+  Number of products =   2
+   Product #  1 is atomic deuterium                
+     (vx,vy,vz) =   1.3201844E+04,  -1.2129006E+04,  -1.2442806E+04 m/s
+      weight =     1.0000000000000
+   Product #  2 is deuterium ion                   
+     (vx,vy,vz) =   2.1887737E+04,   0.0000000E+00,   0.0000000E+00 m/s
+      weight =     1.0000000000000
+\end{verbatim}
+Note that since some aspects of the collision process may be random
+(e.g., in this case the ion reagent is sampled from a Maxwellian
+distribution), these results may not be unique. However, they should
+be reproducible in consecutive runs of |reactiontest|.
+
+Third, the mass, momentum, and energy exchange rates for the reaction
+are given. For simplicity, the exchanges for all background and
+test species in the problem are listed, including species not appearing in
+the examined reaction:
+\begin{verbatim}
+  Background Sources: mass, momentum (1, 2, 3), energy
+  Background = electron
+  0.0000000E+00
+(  0.0000000E+00,   0.0000000E+00,   0.0000000E+00)
+  0.0000000E+00
+  Background = deuterium ion
+  0.0000000E+00
+(  5.4128407E-18,   7.5585061E-18,   7.7540588E-18)
+  8.8745150E-16
+  Test Sources: mass, momentum (1, 2, 3), energy
+  Test = geometry
+  0.0000000E+00
+(  0.0000000E+00,   0.0000000E+00,   0.0000000E+00)
+  0.0000000E+00
+  Test = atomic deuterium
+  0.0000000E+00
+( -5.4143155E-18,  -7.5605654E-18,  -7.7561715E-18)
+ -8.8769329E-16
+  Test = molecular deuterium
+  0.0000000E+00
+(  0.0000000E+00,   0.0000000E+00,   0.0000000E+00)
+  0.0000000E+00
+  Test = molecular deuterium ion
+  0.0000000E+00
+(  0.0000000E+00,   0.0000000E+00,   0.0000000E+00)
+  0.0000000E+00
+\end{verbatim}
+The units for these quantities are ${\rm kg} / {\rm s}$ (mass), 
+${\rm kg} \, {\rm m} / {\rm s}^{2}$ (momentum), 
+and ${\rm J} / {\rm s}$ (energy). A positive value indicates a gain
+by the species; a negative value indicates a loss.
+
+Finally, some reactions generate additional scoring data, such as
+line emission rates. If present, these will be printed after the line
+\begin{verbatim}
+  Other Scoring Data:
+\end{verbatim}
+By design, the code computes whatever quantities are included in the 
+reaction's netCDF file, without any additional knowledge as to what the
+quantity is. Hence, no further explanation is available here. The user could 
+likely learn more
+about these quantities from the netCDF file of the reaction and / or
+from the corresponding entry in the |DATA_HISTORY| log.
+
+@m FILE 'reactiontest.web'
+
+@I macros.hweb
+@I string.hweb
+@I element.hweb
+@I species.hweb
+@I reaction.hweb
+@I problem.hweb
+@I random.hweb
+@I reactiondata.hweb
+@I tally.hweb
+@I output.hweb
+@I sysdep.hweb
+@I materials.hweb
+
+@ The main program.
+
+@a
+      program reactiontest
+      implicit_none_f77
+      implicit_none_f90
+
+      call readfilenames
+      call init_reactiontest
+      call start_reactiontest
+
+      stop
+      end
+
+      @<Functions and Subroutines@>
+
+@ Actual reactiontest code.
+
+@<Functions...@>=
+      subroutine start_reactiontest
+
+      implicit_none_f77
+      el_common
+      sp_common
+      rc_common
+      pr_common
+      rd_common
+      implicit_none_f90
+      st_decls                                      // Common
+      rd_decls
+      @<Memory allocation interface@>
+
+      character*LINELEN line                         // Local
+      integer length,p,b,e,i,ivar,nprod,psp
+      rn_seed_decl(seed)
+      real vtest,energy,density,temperature,rate,rr
+      real independent_parameters[xs_max_indep_params],w_prod[rc_product_max],
+     $     scoring_data[scoring_data_max]
+      vc_decl(vt)
+      vc_decl(vb)
+      vc_decl(vrel)
+      vc_decl(v_prod[rc_product_max])
+      sp_decl(test_sp)
+      sp_decl(background_sp)
+      sp_decl(prod[rc_product_max])
+      rc_decl(reaction)
+      pr_reaction_decl(prob_react)
+      pr_reaction_decl(ts_reac)
+      pr_background_decl(back)
+      pr_background_decl(background)
+      pr_test_decl(test_i)
+      pr_test_decl(test)
+      pr_test_decl(test_ex)
+      rn_decl(tag)
+
+      external eval_data                             // External
+      real eval_data
+      
+      rn_decls
+
+/* |process_reaction| needs random number thread */
+      call decimal_to_seed('12345678',seed)
+      call random_init_d2(seed,rn_args(tag))  
+
+loop: continue
+      write(stdout,*) 'Enter symbols for test particle, background particle, reaction'
+
+      if (! read_string(stdin,line,length)) goto eof
+      assert(length<=len(line))
+      length=parse_string(line(:length))
+      p=0
+      assert(next_token(line,b,e,p))
+      test_sp=sp_lookup(line(b:e))
+      if (!sp_check(test_sp)) then
+         write(stdout,*) line(b:e),' is not a valid species; try again.'
+         go to loop
+      end if
+      test=pr_test_lookup(test_sp)
+      test_ex=pr_ex_test_lookup(test_sp)
+      if (pr_test_check(test)) then
+         write(stdout,*) line(b:e),' is a standard test species. Proceeding...'
+      else if (pr_ex_test_check(test_ex)) then
+         write(stdout,*) line(b:e),' is an external test species. Proceeding...'
+      else
+         write(stdout,*) line(b:e),' is not a valid test species; try again.'
+         go to loop
+      end if
+      assert(next_token(line,b,e,p))
+      background_sp=sp_lookup(line(b:e))
+      if (!sp_check(background_sp)) then
+         write(stdout,*) line(b:e),' is not a valid species; try again.'
+         go to loop
+      end if
+      background=pr_background_lookup(background_sp)
+      if (!pr_background_check(background)) then
+         write(stdout,*) line(b:e),' is not a valid background species; try again.'
+         go to loop
+      end if
+      assert(next_token(line,b,e,p))
+      reaction=rc_lookup(line(b:e))
+      if (!rc_check(reaction)) then
+         write(stdout,*) line(b:e),' is not a valid reaction; try again.'
+         go to loop
+      end if
+      prob_react=pr_reaction_lookup(reaction)
+      if (!pr_reaction_check(prob_react)) then
+         write(stdout,*)line(b:e), ' is not a valid reaction for this problem; try again.'
+         go to loop
+      end if
+/*
+   This loop replaces a simple |int_lookup| into |pr_ts_rc| that
+   only returns one possible reaction.  Skip this for external test and reaction.
+*/
+      if (pr_test_check(test)) then
+         ts_reac=int_uninit
+         do i=1,pr_rc_num(test)
+            if ((pr_ts_rc(test,i) == prob_react) 
+     $           && (pr_ts_bk(test,i) == background)) ts_reac=i
+         end do
+         if (ts_reac == int_uninit) then
+            write(stdout,*) 'No reaction ', trim(rc_sy(reaction)),
+     $           ' found with background ',trim(sp_sy(background_sp)),
+     $           '; try again.'
+            go to loop
+         end if
+      end if
+/*
+   With the above improvements, the following checks may be superfluous.
+*/      
+      if (!(sp_generic(test_sp) == sp_generic(rc_reagent(reaction,2)))) then
+         write(stdout,*) trim(sp_sy(test_sp)),' is not a reagent for reaction ',
+     $        trim(rc_sy(reaction)),'; try again.'
+         go to loop
+      end if
+      if (!(sp_generic(background_sp) == sp_generic(rc_reagent(reaction,1)))) then
+         write(stdout,*) trim(sp_sy(background_sp)),' is not a reagent for reaction ',
+     $        trim(rc_sy(reaction)),'; try again.'
+         go to loop
+      end if
+      
+      write(stdout,*) '     Test species is:       ',trim(sp_name(test_sp))
+      write(stdout,*) '     Background species is: ',trim(sp_name(background_sp))
+      write(stdout,*) '     Reaction name is:      ',trim(rc_name(reaction))
+
+loop1: continue
+
+      write(stdout,'(/a)') 'Enter test energy, background density, temperature'
+      
+      if (! read_string(stdin,line,length)) goto loop
+      assert(length<=len(line))
+      length=parse_string(line(:length))
+      p=0
+      assert(next_token(line,b,e,p))
+      energy=electron_charge*read_real(line(b:e))
+      assert(next_token(line,b,e,p))
+      density=read_real(line(b:e))
+      assert(next_token(line,b,e,p))
+      temperature=electron_charge*read_real(line(b:e))
+      if (energy <= zero || density <= zero || temperature <= zero) then
+         write(stdout,*) ' All of these quantities must be greater than zero; try again.'
+         go to loop1
+      end if
+      
+      vtest=sqrt(two*energy/sp_m(test_sp))
+      vc_set(vt,vtest,zero,zero)
+      vc_set(vb,zero,zero,zero)
+      
+/*
+  The following should match subr. |set_indep_params|
+*/
+      do i=1,xs_max_indep_params
+         independent_parameters[i]=zero
+      end do
+      independent_parameters[xs_var_density]=density
+      vc_difference(vt,vb,vrel)
+      independent_parameters[xs_var_energy]=half*sp_m(test_sp)*vc_abs2(vrel)
+      independent_parameters[xs_var_temperature]=temperature
+      independent_parameters[xs_var_sp_energy]=half*vc_abs2(vrel)
+      independent_parameters[xs_var_sp_temperature]=temperature/sp_m(background_sp)
+      independent_parameters[xs_var_zone]=0   // Not applicable!!!
+      independent_parameters[xs_var_v_test_1]=vt[1]
+      independent_parameters[xs_var_v_test_2]=vt[2]
+      independent_parameters[xs_var_v_test_3]=vt[3]
+      independent_parameters[xs_var_v_flow_1]=vb[1]
+      independent_parameters[xs_var_v_flow_2]=vb[2]
+      independent_parameters[xs_var_v_flow_3]=vb[3]
+      independent_parameters[xs_var_m_test]=sp_m(test_sp)
+      independent_parameters[xs_var_m_back]=sp_m(background_sp)
+      if (reaction_rate_num_rand[prob_react] > 0) then
+         assert(reaction_rate_num_rand[prob_react] <= xs_max_random)
+         do i=1,reaction_rate_num_rand[prob_react]
+            rn_next(rr,tag)
+            independent_parameters[xs_var_1st_random_number+i-1]=rr
+         end do
+      end if
+/*
+  This parameter was added for the ion conversion process.
+  Assume that the input temperature is the electron temperature
+  in this case.
+*/
+      independent_parameters[xs_var_elec_temperature]=temperature
+
+      rate=eval_data(rd_data_args(reaction_rate,[prob_react]),
+     $     independent_parameters,rn_args(tag))
+     $     *independent_parameters[xs_var_density]
+
+      write(stdout,'(a,1pe15.7,a)') '    Test energy = ',energy,' J'
+      write(stdout,'(a,1pe15.7,a,e15.7,a,e15.7,a)') '    Test (vx,vy,vz) = ',
+     $     vt[1],', ',vt[2],', ',vt[3],' m/s'
+      write(stdout,'(a,1pe15.7,a)') '    Background density = ',
+     $     density,' m**-3'
+      write(stdout,'(a,1pe15.7,a)') '    Background temperature = ',
+     $     temperature,' J'
+      write(stdout,'(a,1pe15.7,a)') '      => Reaction rate = ',
+     $     rate,' s**(-1)'
+
+      if (!pr_test_check(test)) go to loop1  // Skip processing for external tests
+
+      if (reaction_handling_num_rand[prob_react] > 0) then
+         assert(reaction_handling_num_rand[prob_react] <= xs_max_random)
+         do i=1,reaction_handling_num_rand[prob_react]
+            rn_next(rr,tag)
+            independent_parameters[xs_var_1st_random_number+i-1]=rr
+         end do
+      end if
+
+      do i=1,scoring_data_max
+         scoring_data[i]=zero
+      end do
+
+/* Determine reaction products */
+      if (rc_reaction_type(reaction) == 'chargex') then
+         call chargex(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'elastic') then
+         call elastic(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'dissoc') then
+         call dissoc(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'dissoc_rec') then
+         call dissoc(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'ionize') then
+         call ionize(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'ionize_suppress') then
+         call ionize(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'excitation') then
+         call excite(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'deexcitation') then
+         call excite(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else if (rc_reaction_type(reaction) == 'ion_conv') then
+         call ion_conv(pr_test_args(test),
+     $        pr_reaction_args(ts_reac),rate,independent_parameters,
+     $        nprod,sp_args(prod),vc_args(v_prod[1]),w_prod,
+     $        scoring_data,rn_args(tag))
+      else
+         write(stdout,*) '**No reaction processing routine available**'
+      end if
+
+      write(stdout,*) ' Number of products = ',nprod
+      do i=1,nprod
+         write(stdout,*) '  Product #',i,' is ',sp_name(prod[i])
+         write(stdout,'(a,1pe15.7,a,e15.7,a,e15.7,a)') '     (vx,vy,vz) = ',
+     $        v_prod[i][1],', ',v_prod[i][2],', ',v_prod[i][3],' m/s'
+         write(stdout,*) '     weight = ',w_prod[i]
+      end do
+
+      write(stdout,*) ' Background Sources: mass, momentum (1, 2, 3), energy'
+      do back=1,pr_background_num
+         write(stdout,*) ' Background = ',trim(sp_name(pr_background(back)))
+         psp=pr_problem_sp_back(back)
+         write(stdout,'(1pe15.7)') scoring_data[pr_var_problem_sp_index(pr_var_mass_change,psp)]
+         write(stdout,'(a,1pe15.7,a,e15.7,a,e15.7,a)') '(',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_vector,psp)],', ',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_2,psp)],', ',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_3,psp)],')'
+         write(stdout,'(1pe15.7)') scoring_data[pr_var_problem_sp_index(pr_var_energy_change,psp)]
+      end do
+
+      write(stdout,*) ' Test Sources: mass, momentum (1, 2, 3), energy'
+      do test_i=1,pr_test_num
+         write(stdout,*) ' Test = ',trim(sp_name(pr_test(test_i)))
+         psp=pr_problem_sp_test(test_i)
+         write(stdout,'(1pe15.7)') scoring_data[pr_var_problem_sp_index(pr_var_mass_change,psp)]
+         write(stdout,'(a,1pe15.7,a,e15.7,a,e15.7,a)') '(',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_vector,psp)],', ',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_2,psp)],', ',
+     $        scoring_data[pr_var_problem_sp_index(pr_var_momentum_change_3,psp)],')'
+         write(stdout,'(1pe15.7)') scoring_data[pr_var_problem_sp_index(pr_var_energy_change,psp)]
+      end do
+
+      write(stdout,*) ' Other Scoring Data:'
+      do i=1,pr_var_mass_change-1
+         if (scoring_data[i] != zero) then
+            write(stdout,'(a,a,i3,a,1pe15.7)') trim(pr_var0_list[i]),
+     $           ': scoring_data[',i,'] = ',
+     $           scoring_data[i]
+         end if
+      end do
+      ivar=pr_var_mass_change
+     $     +(1+pr_background_num+pr_test_num)*pr_num_change_vars
+      do i=ivar,pr_var0_num
+         if (scoring_data[i] != zero) then
+            write(stdout,'(a,a,i3,a,1pe15.7)') trim(pr_var0_list[i]),
+     $           ': scoring_data[',i,'] = ',
+     $           scoring_data[i]
+         end if
+      end do
+
+      goto loop1
+
+eof:  continue
+      return
+      end
+
+@* Initialize.
+
+@<Functions...@>=
+      subroutine init_reactiontest
+      implicit_none_f77
+      implicit_none_f90
+      
+      call nc_read_elements
+      call nc_read_species
+      call nc_read_materials
+      call nc_read_pmi
+      call nc_read_reactions
+      call nc_read_problem
+      
+      return
+      end
+
+@* INDEX.
+      

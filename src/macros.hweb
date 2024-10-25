@@ -1,0 +1,106 @@
+@* Header macros degas2.
+% $Id: d19f79840a4ed4a5f9802073e66a9384d34addfa $
+
+\ID{$Id: d19f79840a4ed4a5f9802073e66a9384d34addfa $}
+
+@I sysdep.hweb
+
+@ Define some constants.
+
+@m zero const(0.0)
+@m one const(1.0)
+@m half const(0.5)
+@m two const(2.0)
+@m PI atan2(zero,-one)
+@m FALSE 0
+@m TRUE 1
+
+@m real_undef const(1.0,30)
+@m int_undef 1000000000
+@m char_undef 'undefined'
+
+@m real_unused const(2.0,30)
+@m int_unused 2000000000
+@m char_unused 'UNUSED'
+
+@m real_uninit const(314159265.3589793238462)
+@m int_uninit 314159265
+@m char_uninit 'UNINITIALIZED'
+
+
+@ File units.
+
+@m stdin 5
+@m stdout 6
+@#if HP
+@m stderr 7
+@#else
+@m stderr 0
+@#endif
+@m diskin 20
+@m diskout 31
+
+@ Error checking.
+
+@#if defined(DEBUG)
+  @m DEBUG 1
+@#else
+  @m DEBUG 0
+@#endif
+
+@#if defined(INLINE)
+  @m INLINE 1
+@#else
+  @m INLINE 0
+@#endif
+
+@f FILE integer
+
+@#if DEBUG
+@m assert(condition) if (!(condition)) call error_exit('Assertion failed ('\/FILE\/'): '\/#condition) @;
+@#else
+@m assert(condition) if (condition) continue @;
+@#endif
+
+
+@#if DEBUG
+    @m check(condition) assert(condition) @;
+@#else
+    @m check(condition) assert(condition) @;
+@#endif
+
+@ Some labels.
+
+@m loop #:0
+@m loop1 #:0
+@m loop2 #:0
+@m loop3 #:0
+@m eof #:0
+@m eof1 #:0
+@m eof2 #:0
+@m break #:0
+@m break1 #:0
+@m break2 #:0
+@m skip #:0
+@m skip1 #:0
+@m skip2 #:0
+
+@ The lengths of some character variables.
+
+@m LINELEN 300
+@m LONGLINE 450
+@m FILELEN 96
+
+@ Include other definitions.
+
+@I array.hweb
+@I vector.hweb
+@I constants.hweb
+
+@ Some common index definitions
+
+@a
+      package_init(cm)
+      define_dimen_pk(cm,vector,3)
+      define_dimen_pk(cm,string,LINELEN)
+      package_end(cm)

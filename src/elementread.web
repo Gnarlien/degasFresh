@@ -1,0 +1,289 @@
+% $Id: 910d010ad3b18d0e4c94e03307da2c6f8aefb0f6 $
+\Title{elementread}
+
+
+@* Introduction.
+
+\ID{$Id: 910d010ad3b18d0e4c94e03307da2c6f8aefb0f6 $}
+
+Introduction\ldots
+
+@m FILE 'elementread.web'
+
+@I macros.hweb
+@I readfilenames.hweb
+@I element.hweb
+@I netcdf.hweb
+@I sysdep.hweb
+@I species.hweb
+@I reaction.hweb
+@I zone.hweb
+@I background.hweb
+@I sources.hweb
+@I vector.hweb
+@I mpi.hweb
+@I random.hweb
+
+@ The unnamed module.
+
+@a
+      @<Functions and Subroutines@>
+
+@ Read in data from netcdf file \verb+elements.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_elements
+      implicit_none_f77
+      el_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      nc_decls
+      el_ncdecl
+      mp_decls
+      integer fileid
+      character *FILELEN tempfile  //local
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile = filenames_array[elementsfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        element_version,len(element_version),nc_stat)
+         el_ncread(fileid)
+         call ncclose(fileid,nc_stat)
+      endif
+
+      el_mpibcast
+
+      return
+      end
+
+@ Read in data from netcdf file \verb+species.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_species
+      implicit_none_f77
+      sp_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      integer fileid
+      character *FILELEN tempfile  //local
+      sp_ncdecl
+      nc_decls
+      mp_decls
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile =  filenames_array[speciesfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        species_version,len(species_version),nc_stat)
+
+         sp_ncread(fileid)
+      
+         call ncclose(fileid,nc_stat)
+      endif
+
+      sp_mpibcast
+
+      return
+      end
+
+@ Read in data from netcdf file \verb+reactions.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_reactions
+      implicit_none_f77
+      rc_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      integer fileid
+      character *FILELEN tempfile  //local
+      rc_ncdecl
+      nc_decls
+      mp_decls
+      @<Memory allocation interface@>
+
+      if (mpi_master) then
+         tempfile =  filenames_array[reactionfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+         call ncattgetc(fileid,NC_GLOBAL,'data_version',
+     $        reaction_version,len(reaction_version),nc_stat)
+
+         rc_ncread(fileid)
+      
+         call ncclose(fileid,nc_stat)
+      end if
+      
+      rc_mpibcast
+
+      return
+      end
+
+@ Read in background data from netcdf file \verb+background.nc+
+      
+@<Functions...@>=
+      subroutine nc_read_background
+      implicit_none_f77
+      zn_common
+      bk_common
+      so_common
+      rf_common
+      mp_common
+      implicit_none_f90
+      integer fileid
+      character *FILELEN tempfile  //local
+      bk_ncdecl
+      nc_decls
+      cm_ncdecl
+      mp_decls
+      @<Memory allocation interface@>
+      so_ncdecl
+      vc_decls
+
+      if (mpi_master) then
+         tempfile =  filenames_array[backgroundfile]
+         assert(tempfile != char_undef)
+         fileid = ncopen(tempfile,NC_NOWRITE,nc_stat)
+
+         cm_ncread(fileid)
+         bk_ncread(fileid)
+         so_ncread(fileid)
+
+         call ncclose(fileid,nc_stat)
+      end if
+      
+      cm_mpibcast
+      bk_mpibcast
+/*
+   The choice of performing the source sampling on the master or slave
+   is controlled by this switch.  In either case, the post-sampling
+   source parameters are carried via the |flight| and |flight_frag|
+   classes.
+*/
+@#if MASTER_SAMPLE
+/*
+   In the case of master sampling, the source data are primarily kept on the master.  
+   We only need to broadcast theparameters characterizing time variation;
+   these are needed only in subroutine |follow|.
+*/
+@#if MPI
+      mpi_broadcast(so_time_dependent) 
+      mpi_broadcast(so_time_initial)
+      mpi_broadcast(so_time_final)
+      mpi_broadcast(so_time_initialization)
+@#endif
+@#else
+      so_mpibcast                       
+@#endif
+
+      return
+      end
+
+@ Count the number of occurrences of a given element in a species. This
+short function loops through the components of the input species |sp|,
+identifies the one matching element |el| and returns the count of that
+element. If the element is not present, zero is returned.
+
+@<Functions...@>=
+      function species_el_count(sp_dummy(s),el_dummy(el))
+      implicit_none_f77
+      sp_common
+      implicit_none_f90
+      integer species_el_count            // Function
+      sp_decl(s)                         // Input
+      el_decl(el)
+      integer i,j                         // Local
+
+
+      j=0
+      do i=1,sp_ncomp(s)
+         if (sp_el(s,i)==el) then
+            j=i
+            go to break
+         end if
+      end do
+      species_el_count=0
+      return
+
+break: continue
+      species_el_count=sp_count(s,j)
+      
+      return
+      end
+
+@ Compare the sum of two species lists. The number of species in the lists
+|list1| and |list2| are |n1| and |n2|. One subtle reason
+for carrying out this task as a check against a specific list rather than 
+using the summed properties of |list1| to choose a resulting species
+from the full list of species is that such a choice may not be unique
+due to the presence of other properties not checked here (e.g., quantum
+states). 
+
+@<Functions...@>=
+      function species_add_check(n1,sp_dummy(list1),n2,sp_dummy(list2))
+      implicit_none_f77
+      sp_common
+      el_common
+      implicit_none_f90
+      logical species_add_check           // Function
+      integer n1,n2                       // Input
+      sp_decl(list1[n1])
+      sp_decl(list2[n2])
+      integer z_sum1,z_sum2,i,ic,count_sum1,count_sum2  // Local
+      real m_sum1,m_sum2
+      external species_el_count           // External
+      integer species_el_count
+
+
+      species_add_check=.false.
+/* First compare total charge and mass of the two lists */
+      z_sum1=0
+      m_sum1=zero
+      do i=1,n1
+         z_sum1=z_sum1+sp_z(list1[i])
+         m_sum1=m_sum1+sp_m(list1[i])
+      end do
+      z_sum2=0
+      m_sum2=zero
+      do i=1,n2
+         z_sum2=z_sum2+sp_z(list2[i])
+         m_sum2=m_sum2+sp_m(list2[i])
+      end do
+
+      if (z_sum1 != z_sum2) return
+      if (abs(m_sum1-m_sum2) > epsilon*max(m_sum1,m_sum2)) return
+
+/* Next, loop over the full list of elements, counting the total number 
+appearing in each list and comparing the two. */
+      do ic=1,el_num
+         count_sum1=0
+         count_sum2=0
+         do i=1,n1
+            count_sum1=count_sum1+species_el_count(list1[i],el_args(ic))
+         end do
+         do i=1,n2
+            count_sum2=count_sum2+species_el_count(list2[i],el_args(ic))
+         end do
+         if (count_sum1 != count_sum2) return
+      end do
+
+/* Passed all tests; call it a match. */
+      species_add_check=.true.
+
+      return
+      end
+
+@* References.
+
+\bibliographystyle{report}
+\bibliography{../../degas}
+
+@* INDEX.
+

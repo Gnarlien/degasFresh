@@ -1,0 +1,1 @@
+/usr/pppl/gcc/11.2.0/bin/gfortran -fallow-argument-mismatch -O3 -DNDEBUG -O3 CMakeFiles/tri_to_sonnet.dir/tri_to_sonnet.f.o CMakeFiles/tri_to_sonnet.dir/string.f.o CMakeFiles/tri_to_sonnet.dir/sysdep.f.o CMakeFiles/tri_to_sonnet.dir/geometry2d_mod.f.o -o bin/tri_to_sonnet 

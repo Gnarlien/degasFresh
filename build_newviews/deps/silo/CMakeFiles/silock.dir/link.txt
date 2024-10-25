@@ -1,0 +1,1 @@
+/usr/pppl/gcc/11.2.0/bin/gcc -O3 -DNDEBUG CMakeFiles/silock.dir/tools/silock/silock.c.o -o bin/silock   -L/u/aangulo/degasFresh/degas2/build_newviews/deps/silo/lib  -Wl,-rpath,/u/aangulo/degasFresh/degas2/build_newviews/deps/silo/lib: -lsilo 

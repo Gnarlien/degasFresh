@@ -1,0 +1,5 @@
+/u/aangulo/degasFresh/degas2/build_newviews/CMakeFiles/FortranCInterface/CMakeFiles/myfort.dir
+/u/aangulo/degasFresh/degas2/build_newviews/CMakeFiles/FortranCInterface/CMakeFiles/symbols.dir
+/u/aangulo/degasFresh/degas2/build_newviews/CMakeFiles/FortranCInterface/CMakeFiles/FortranCInterface.dir
+/u/aangulo/degasFresh/degas2/build_newviews/CMakeFiles/FortranCInterface/CMakeFiles/edit_cache.dir
+/u/aangulo/degasFresh/degas2/build_newviews/CMakeFiles/FortranCInterface/CMakeFiles/rebuild_cache.dir

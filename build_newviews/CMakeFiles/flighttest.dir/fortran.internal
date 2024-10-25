@@ -1,0 +1,28 @@
+# The fortran modules provided by this target.
+provides
+ al_mod.mod
+ bk_mod.mod
+ de_mod.mod
+ el_mod.mod
+ ff_mod.mod
+ g2_mod.mod
+ gi_mod.mod
+ ma_mod.mod
+ mp_mod.mod
+ ou_mod.mod
+ pd_mod.mod
+ pf_mod.mod
+ pm_mod.mod
+ pr_mod.mod
+ ps_mod.mod
+ rc_mod.mod
+ rd_mod.mod
+ rf_mod.mod
+ sa_mod.mod
+ sc_mod.mod
+ sn_mod.mod
+ so_mod.mod
+ sp_mod.mod
+ tl_mod.mod
+ xs_mod.mod
+ zn_mod.mod

@@ -1,0 +1,12 @@
+plasma_file plasmafile.txt
+new_source_group
+  source_type plate
+  source_geom surface
+  source_species D
+  source_root_sp D+
+  specify_flux
+  source_stratum 3
+  source_segment *
+  source_strength 1e+24
+  source_nflights 1000000
+end_source_group

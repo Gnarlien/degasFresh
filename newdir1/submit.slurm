@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --job-name=micerdegas2     # create a short name for your job
+#SBATCH --nodes=8                # node count
+#SBATCH --ntasks=128               # total number of tasks across all nodes
+#SBATCH --cpus-per-task=1        # cpu-cores per task (>1 if multi-threaded tasks)
+#SBATCH --mem-per-cpu=4G         # memory per cpu-core (4G is default)
+#SBATCH --time=01:00:00          # total run time limit (HH:MM:SS)
+#SBATCH --mail-type=begin        # send email when job begins
+#SBATCH --mail-type=end          # send email when job ends
+#SBATCH --mail-type=fail         # send email if job fails
+#SBATCH --mail-user=aangulo@pppl.gov
+
+module purge
+module load anaconda3/2022.10
+
+module load gcc openmpi szip hdf5-parallel netcdf-c netcdf-fortran silo cmake anaconda3; export NetCDF_ROOT=$NETCDF_C_HOME:$NETCDF_FORTRAN_HOME; export PATH=$HOME/degasFresh/degas2/build/bin:$PATH; export PYTHONPATH=$HOME/degas/degas2/scripts:$PYTHONPATH
+
+python micerscript.py

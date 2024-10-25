@@ -1,0 +1,20 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Load data from text files
+rho_vals = np.loadtxt('rhoVals.txt')
+ion_profile = np.loadtxt('ionProfile.txt')
+
+# Plot ion profile vs rho values
+plt.figure(figsize=(8, 6))
+plt.plot(rho_vals, ion_profile, color='b', label='Ion Profile')
+
+# Labeling the plot
+plt.title('Ion Profile vs Rho Values')
+plt.xlabel('Rho Values')
+plt.ylabel('Ion Profile')
+plt.grid(True)
+plt.legend()
+
+# Show the plot
+plt.show()
